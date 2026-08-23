@@ -1,0 +1,100 @@
+:root {
+    color-scheme: light dark;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+    margin: 0;
+    background: #f5f6f8;
+    color: #1f2933;
+}
+
+.app {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 2rem;
+}
+
+.subtitle {
+    margin: 0.25rem 0 1.5rem;
+    color: #616e7c;
+}
+
+.composer {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.composer input {
+    flex: 1;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid #cbd2d9;
+    border-radius: 6px;
+    font-size: 1rem;
+}
+
+.composer button {
+    padding: 0.6rem 1rem;
+    border: none;
+    border-radius: 6px;
+    background: #1f6feb;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.items {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.7rem 0.9rem;
+    background: white;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.item span {
+    cursor: pointer;
+    flex: 1;
+}
+
+.item.done span {
+    text-decoration: line-through;
+    color: #9aa5b1;
+}
+
+.item .remove {
+    border: none;
+    background: transparent;
+    color: #cf1124;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background: #1f2933;
+        color: #f5f6f8;
+    }
+    .item {
+        background: #323f4b;
+    }
+    .composer input {
+        background: #323f4b;
+        color: #f5f6f8;
+        border-color: #52606d;
+    }
+}
