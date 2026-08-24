@@ -100,6 +100,14 @@ pub fn mark_synced(item_ids: &[Uuid], membership_ids: &[Uuid]) {
     save_memberships(&memberships);
 }
 
+/// Wipe all locally cached rows - used when switching accounts on a shared device so
+/// one user's data never lingers where the next login could see it.
+pub fn clear_all() {
+    LocalStorage::delete(ITEMS_KEY);
+    LocalStorage::delete(MEMBERSHIPS_KEY);
+    LocalStorage::delete(CURSOR_KEY);
+}
+
 /// Merge server-pulled rows into local storage. A row that's still locally dirty (an
 /// unsynced local edit) is never clobbered by an incoming pull - it wins until it syncs.
 pub fn apply_pulled(items: Vec<Item>, memberships: Vec<Membership>) {

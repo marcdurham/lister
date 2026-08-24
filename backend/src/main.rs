@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod db;
 
 use actix_files::{Files, NamedFile};
@@ -32,6 +33,10 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .service(health)
             .service(api::sync)
+            .service(auth::register)
+            .service(auth::login)
+            .service(auth::logout)
+            .service(auth::me)
             .service(Files::new("/", dist_dir()).index_file("index.html"))
             .default_service(actix_web::web::route().to(spa_fallback))
     })

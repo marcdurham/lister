@@ -52,9 +52,57 @@ impl AppState {
     }
 
     pub fn has_children(&self, item_id: Uuid) -> bool {
+        self.direct_child_count(item_id) > 0
+    }
+
+    /// Count of live (non-deleted) direct children, regardless of visibility.
+    pub fn direct_child_count(&self, item_id: Uuid) -> usize {
         self.memberships
             .values()
-            .any(|m| m.parent_id == Some(item_id) && m.deleted_at.is_none())
+            .filter(|m| m.parent_id == Some(item_id) && m.deleted_at.is_none())
+            .filter(|m| {
+                self.items
+                    .get(&m.item_id)
+                    .is_some_and(|i| i.deleted_at.is_none())
+            })
+            .count()
+    }
+
+    /// How many active (non-deleted) memberships an item currently has.
+    fn active_membership_count(&self, item_id: Uuid) -> usize {
+        self.memberships
+            .values()
+            .filter(|m| m.item_id == item_id && m.deleted_at.is_none())
+            .count()
+    }
+
+    fn direct_children_ids(&self, item_id: Uuid) -> Vec<Uuid> {
+        self.memberships
+            .values()
+            .filter(|m| m.parent_id == Some(item_id) && m.deleted_at.is_none())
+            .map(|m| m.item_id)
+            .collect()
+    }
+
+    /// Descendants that would be swept up if `item_id` is removed: children (recursively)
+    /// whose *only* parent is somewhere in this branch, i.e. not shared with another list.
+    pub fn only_child_descendant_ids(&self, item_id: Uuid) -> Vec<Uuid> {
+        let mut result = Vec::new();
+        let mut stack: Vec<Uuid> = self
+            .direct_children_ids(item_id)
+            .into_iter()
+            .filter(|cid| self.active_membership_count(*cid) == 1)
+            .collect();
+        while let Some(id) = stack.pop() {
+            result.push(id);
+            let more: Vec<Uuid> = self
+                .direct_children_ids(id)
+                .into_iter()
+                .filter(|cid| self.active_membership_count(*cid) == 1)
+                .collect();
+            stack.extend(more);
+        }
+        result
     }
 
     pub fn top_level_lists(&self) -> Vec<Item> {
@@ -62,6 +110,18 @@ impl AppState {
             .into_iter()
             .map(|(item, _)| item)
             .collect()
+    }
+
+    /// Items currently in the trash, most-recently-removed first.
+    pub fn trashed_items(&self) -> Vec<Item> {
+        let mut items: Vec<Item> = self
+            .items
+            .values()
+            .filter(|i| i.deleted_at.is_some())
+            .cloned()
+            .collect();
+        items.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        items
     }
 }
 
@@ -86,7 +146,16 @@ pub enum Action {
         item_id: Uuid,
         parent: Option<Uuid>,
     },
-    RemoveFromList(Uuid),
+    RemoveItem {
+        item_id: Uuid,
+        remove_children: bool,
+    },
+    RestoreItem(Uuid),
+    ConvertType(Uuid),
+    UpdateText {
+        item_id: Uuid,
+        text: String,
+    },
     SetOnline(bool),
     SetSyncing(bool),
 }
@@ -189,12 +258,81 @@ impl Reducible for AppState {
                 next.memberships.insert(membership.id, membership);
                 Rc::new(next)
             }
-            Action::RemoveFromList(membership_id) => {
+            Action::RemoveItem {
+                item_id,
+                remove_children,
+            } => {
+                let now = Utc::now();
                 let mut next = (*self).clone();
-                if let Some(m) = next.memberships.get_mut(&membership_id) {
-                    m.deleted_at = Some(Utc::now());
-                    m.updated_at = Utc::now();
-                    store::put_membership(m.clone());
+                let mut to_remove = vec![item_id];
+                if remove_children {
+                    to_remove.extend(self.only_child_descendant_ids(item_id));
+                }
+                for id in &to_remove {
+                    if let Some(item) = next.items.get_mut(id) {
+                        item.deleted_at = Some(now);
+                        item.updated_at = now;
+                        store::put_item(item.clone());
+                    }
+                    let membership_ids: Vec<Uuid> = next
+                        .memberships
+                        .values()
+                        .filter(|m| m.item_id == *id && m.deleted_at.is_none())
+                        .map(|m| m.id)
+                        .collect();
+                    for mid in membership_ids {
+                        if let Some(m) = next.memberships.get_mut(&mid) {
+                            m.deleted_at = Some(now);
+                            m.updated_at = now;
+                            store::put_membership(m.clone());
+                        }
+                    }
+                }
+                Rc::new(next)
+            }
+            Action::RestoreItem(item_id) => {
+                let mut next = (*self).clone();
+                let trashed_at = next.items.get(&item_id).and_then(|i| i.deleted_at);
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    item.deleted_at = None;
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
+                }
+                if let Some(trashed_at) = trashed_at {
+                    let ids: Vec<Uuid> = next
+                        .memberships
+                        .values()
+                        .filter(|m| m.item_id == item_id && m.deleted_at == Some(trashed_at))
+                        .map(|m| m.id)
+                        .collect();
+                    for mid in ids {
+                        if let Some(m) = next.memberships.get_mut(&mid) {
+                            m.deleted_at = None;
+                            m.updated_at = Utc::now();
+                            store::put_membership(m.clone());
+                        }
+                    }
+                }
+                Rc::new(next)
+            }
+            Action::ConvertType(item_id) => {
+                let mut next = (*self).clone();
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    item.is_note = !item.is_note;
+                    if item.is_note {
+                        item.done = false;
+                    }
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
+                }
+                Rc::new(next)
+            }
+            Action::UpdateText { item_id, text } => {
+                let mut next = (*self).clone();
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    item.text = text;
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
                 }
                 Rc::new(next)
             }
