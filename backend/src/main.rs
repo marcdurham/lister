@@ -1,5 +1,8 @@
+mod api;
+mod db;
+
 use actix_files::{Files, NamedFile};
-use actix_web::{get, App, HttpServer, Responder};
+use actix_web::{get, web, App, HttpServer, Responder};
 use std::path::PathBuf;
 
 fn dist_dir() -> PathBuf {
@@ -17,12 +20,18 @@ async fn spa_fallback() -> actix_web::Result<NamedFile> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenvy::dotenv().ok();
+
     let bind_addr = std::env::var("LISTER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     println!("Lister backend listening on http://{bind_addr}");
 
-    HttpServer::new(|| {
+    let pool = db::connect().await;
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::new(pool.clone()))
             .service(health)
+            .service(api::sync)
             .service(Files::new("/", dist_dir()).index_file("index.html"))
             .default_service(actix_web::web::route().to(spa_fallback))
     })

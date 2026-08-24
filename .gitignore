@@ -2,3 +2,4 @@
 /frontend/dist
 Cargo.lock.bak
 .DS_Store
+.env
