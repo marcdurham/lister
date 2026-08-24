@@ -2,7 +2,9 @@ use actix_files::{Files, NamedFile};
 use actix_web::{get, App, HttpServer, Responder};
 use std::path::PathBuf;
 
-const DIST_DIR: &str = "frontend/dist";
+fn dist_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist")
+}
 
 #[get("/api/health")]
 async fn health() -> impl Responder {
@@ -10,7 +12,7 @@ async fn health() -> impl Responder {
 }
 
 async fn spa_fallback() -> actix_web::Result<NamedFile> {
-    Ok(NamedFile::open(PathBuf::from(DIST_DIR).join("index.html"))?)
+    Ok(NamedFile::open(dist_dir().join("index.html"))?)
 }
 
 #[actix_web::main]
@@ -21,7 +23,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .service(health)
-            .service(Files::new("/", DIST_DIR).index_file("index.html"))
+            .service(Files::new("/", dist_dir()).index_file("index.html"))
             .default_service(actix_web::web::route().to(spa_fallback))
     })
     .bind(bind_addr)?
