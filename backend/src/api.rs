@@ -2047,6 +2047,15 @@ mod tests {
             "position=1e-12 should round-trip correctly, got {}", deserialized.position);
     }
 
+    #[test]
+    fn membership_serde_position_nan_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, f64::NAN);
+        let json = serde_json::to_string(&m).unwrap();
+        // Serde serializes NaN as "NaN" string
+        assert!(json.contains("\"position\":NaN") || json.contains("\"position\":null"),
+            "position=NAN should serialize correctly in JSON, got: {}", json);
+    }
+
 }
 
 
