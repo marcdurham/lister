@@ -848,4 +848,62 @@ mod tests {
             .unwrap();
         assert_eq!(text, Some("updated text".to_string()), "text should update via upsert");
     }
+
+    #[tokio::test]
+    async fn item_soft_delete_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "delete me").await;
+
+        // Mark as deleted with newer timestamp and explicit deleted_at.
+        let now = Utc::now();
+        let deleted = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            deleted_at: Some(now),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &deleted, owner).await.unwrap();
+
+        let deleted_at: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar!("SELECT deleted_at FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(deleted_at.flatten().is_some(), "deleted_at should be set via upsert soft-delete");
+    }
+
+    #[actix_web::test]
+    async fn sync_accepts_empty_memberships_in_request_body() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync with empty memberships array.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK,
+            "sync should accept empty memberships array in request body");
+    }
 }
