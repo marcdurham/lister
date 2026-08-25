@@ -1132,4 +1132,83 @@ mod tests {
         let cursor_epoch = body.cursor.timestamp();
         assert!(cursor_epoch > 0, "sync cursor should be a valid timestamp, got {}", cursor_epoch);
     }
+
+    #[actix_web::test]
+    async fn membership_visible_false_round_trips_via_sync() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "hidden item").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed membership with visible=false.
+        let m = Membership::new(item.id, None, 0.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, false, now(), now(), NULL)",
+            m.id,
+            item.id,
+            m.parent_id,
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify visible=false comes back.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        let membership = body.memberships.iter()
+            .find(|m| m.item_id == item.id)
+            .expect("membership should be in response");
+        assert!(!membership.visible, "visible=false should round-trip via sync");
+    }
+
+    #[tokio::test]
+    async fn item_notes_update_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "notes update").await;
+
+        // Update notes with newer timestamp.
+        let new_notes = serde_json::json!({"highlight": "blue", "priority": 2});
+        let updated = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            notes: Some(new_notes.to_string()),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &updated, owner).await.unwrap();
+
+        let notes: Option<Option<String>> = sqlx::query_scalar!("SELECT notes FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(notes.flatten(), Some(new_notes.to_string()), "notes should update via upsert");
+    }
 }
