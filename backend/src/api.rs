@@ -1935,6 +1935,18 @@ mod tests {
             "visible=false should round-trip correctly");
     }
 
+    #[test]
+    fn membership_serde_position_100_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 100.0);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"position\":100.0") || json.contains("\"position\":100"),
+            "position=100.0 should serialize correctly in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.position - 100.0_f64).abs() < f64::EPSILON,
+            "position=100.0 should round-trip correctly, got {}", deserialized.position);
+    }
+
 }
 
 

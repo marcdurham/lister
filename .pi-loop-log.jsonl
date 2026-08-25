@@ -30,3 +30,6 @@
 {"ts":"2026-08-25T04:30:32.255Z","iteration":29,"event":"continue","stuckStreak":0}
 {"ts":"2026-08-25T04:30:55.250Z","iteration":30,"event":"continue","stuckStreak":0}
 {"ts":"2026-08-25T04:31:33.084Z","iteration":31,"event":"continue","stuckStreak":0}
+{"ts":"2026-08-25T04:31:56.330Z","iteration":32,"event":"continue","stuckStreak":0}
+{"ts":"2026-08-25T04:32:17.388Z","iteration":32,"event":"error","stuckStreak":0,"notice":"Model/provider error (Engine protocol predict stream returned an error: {\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}); retry #1 in 5s.","reason":"Engine protocol predict stream returned an error: {\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}"}
+{"ts":"2026-08-25T04:32:51.235Z","iteration":32,"event":"error","stuckStreak":0,"notice":"Model/provider error (Engine protocol predict stream returned an error: {\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}); retry #2 in 10s.","reason":"Engine protocol predict stream returned an error: {\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}"}
