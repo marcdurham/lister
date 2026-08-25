@@ -594,4 +594,53 @@ mod tests {
             .unwrap();
         assert_eq!(done_flag, Some(true), "done flag should update via upsert");
     }
+
+    #[tokio::test]
+    async fn cross_owner_membership_upsert_ignored() {
+        let pool = test_pool().await;
+        let owner_a = seed_owner(&pool).await;
+        let owner_b = seed_owner(&pool).await;
+        let item_a = seed_item(&pool, owner_a, "a's item").await;
+
+        // Owner A creates a membership.
+        let m = Membership::new(item_a.id, None, 1.0);
+        upsert_membership(&pool, &m, owner_a).await.unwrap();
+
+        // Owner B tries to update with newer timestamp — should be ignored.
+        let fresh = Membership {
+            updated_at: m.updated_at + chrono::Duration::seconds(10),
+            position: 99.0,
+            ..m.clone()
+        };
+        upsert_membership(&pool, &fresh, owner_b).await.unwrap();
+
+        let pos: Option<f64> = sqlx::query_scalar!("SELECT position FROM memberships WHERE id = $1", m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!((pos.unwrap() - 1.0).abs() < f64::EPSILON, "cross-owner upsert should not change position");
+    }
+
+    #[actix_web::test]
+    async fn invalid_session_returns_401() {
+        let pool = test_pool().await;
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                Uuid::new_v4().to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::UNAUTHORIZED);
+    }
 }
