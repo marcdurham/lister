@@ -906,4 +906,49 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK,
             "sync should accept empty memberships array in request body");
     }
+
+    #[actix_web::test]
+    async fn sync_returns_multiple_items() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+
+        // Seed multiple items.
+        seed_item(&pool, owner, "item one").await;
+        seed_item(&pool, owner, "item two").await;
+        seed_item(&pool, owner, "item three").await;
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify all items come back.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        assert_eq!(body.items.len(), 3,
+            "sync should return all seeded items, got {}", body.items.len());
+    }
 }
