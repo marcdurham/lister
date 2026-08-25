@@ -1526,4 +1526,117 @@ mod tests {
         assert!(positions.contains(&10.0), "position 10 should be present");
         assert!(positions.contains(&30.0), "position 30 should be present");
     }
+
+    #[actix_web::test]
+    async fn membership_nil_parent_round_trips_via_sync() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "no parent").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed membership with nil parent_id.
+        let m = Membership::new(item.id, None, 0.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, NULL, $3, true, now(), now(), NULL)",
+            m.id,
+            item.id,
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify parent_id is None.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        let membership = body.memberships.iter()
+            .find(|m| m.item_id == item.id)
+            .expect("membership should be in response");
+        assert_eq!(membership.parent_id, None,
+            "nil parent_id should round-trip via sync");
+    }
+
+    #[actix_web::test]
+    async fn membership_visible_false_in_sync_response() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "hidden").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed membership with visible=false.
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, NULL, 0.0, false, now(), now(), NULL)",
+            Uuid::new_v4(),
+            item.id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify the membership is returned (current implementation may not filter by visibility).
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        // Verify the membership with visible=false is in the response.
+        let membership = body.memberships.iter()
+            .find(|m| m.item_id == item.id)
+            .expect("membership should be in response");
+        assert_eq!(membership.visible, false,
+            "visible flag should persist as false through sync round-trip");
+    }
 }
