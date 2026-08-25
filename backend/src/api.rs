@@ -951,4 +951,108 @@ mod tests {
         assert_eq!(body.items.len(), 3,
             "sync should return all seeded items, got {}", body.items.len());
     }
+
+    #[tokio::test]
+    async fn item_empty_text_persists() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        sqlx::query(
+            "INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, owner_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+        )
+        .bind(item_id)
+        .bind("")
+        .bind(None::<String>)
+        .bind(false)
+        .bind(false)
+        .bind(now.naive_utc())
+        .bind(now.naive_utc())
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let text: Option<String> = sqlx::query_scalar!("SELECT text FROM items WHERE id = $1", item_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(text, Some("".to_string()), "empty string should persist as text");
+    }
+
+    #[actix_web::test]
+    async fn memberships_ordered_by_position_in_sync() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item_a = seed_item(&pool, owner, "pos 10").await;
+        let item_b = seed_item(&pool, owner, "pos 20").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed memberships with different positions.
+        let m_a = Membership::new(item_a.id, None, 10.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m_a.id,
+            item_a.id,
+            m_a.parent_id,
+            10.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let m_b = Membership::new(item_b.id, None, 20.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m_b.id,
+            item_b.id,
+            m_b.parent_id,
+            20.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify memberships are ordered by position.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        if body.memberships.len() >= 2 {
+            let pos0 = body.memberships[0].position;
+            let pos1 = body.memberships[1].position;
+            assert!(pos0 <= pos1,
+                "memberships should be ordered by position ascending, got {} then {}",
+                pos0, pos1);
+        }
+    }
 }
