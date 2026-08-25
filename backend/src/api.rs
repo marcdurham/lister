@@ -301,4 +301,62 @@ mod tests {
         let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn upsert_item_updates_deleted_at_when_newer() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "alive").await;
+
+        // Mark as deleted with a newer timestamp.
+        let deleted = Item {
+            updated_at: item.updated_at + chrono::Duration::seconds(5),
+            deleted_at: Some(Utc::now()),
+            ..item.clone()
+        };
+        upsert_item(&pool, &deleted, owner).await.unwrap();
+
+        let row: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar!(
+            "SELECT deleted_at FROM items WHERE id = $1", item.id
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(row.flatten().is_some(), "deleted_at should be set after soft-delete upsert");
+    }
+
+    #[actix_web::test]
+    async fn sync_endpoint_returns_200_with_valid_session() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        // Create a session so auth resolves.
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
 }

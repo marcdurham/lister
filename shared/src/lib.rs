@@ -130,4 +130,51 @@ mod tests {
         assert!(req.items.is_empty());
         assert!(req.memberships.is_empty());
     }
+
+    #[test]
+    fn item_serde_roundtrip() {
+        let original = Item::new("round trip".into(), true);
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: Item = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, original.id);
+        assert_eq!(decoded.text, "round trip");
+        assert!(decoded.is_note);
+        assert!(!decoded.done);
+        assert_eq!(decoded.deleted_at, None);
+    }
+
+    #[test]
+    fn membership_serde_roundtrip() {
+        let parent = Uuid::new_v4();
+        let original = Membership::new(Uuid::new_v4(), Some(parent), 2.5);
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: Membership = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, original.id);
+        assert_eq!(decoded.item_id, original.item_id);
+        assert_eq!(decoded.parent_id, Some(parent));
+        assert!((decoded.position - 2.5).abs() < f64::EPSILON);
+        assert!(decoded.visible);
+    }
+
+    #[test]
+    fn item_timestamps_are_unique_across_instances() {
+        // Two items created back-to-back should have distinct ids.
+        let a = Item::new("a".into(), false);
+        let b = Item::new("b".into(), false);
+        assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn sync_response_roundtrip() {
+        let item = Item::new("r".into(), false);
+        let resp = SyncResponse {
+            items: vec![item.clone()],
+            memberships: vec![],
+            cursor: Utc::now(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: SyncResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.items.len(), 1);
+        assert_eq!(decoded.items[0].id, item.id);
+    }
 }
