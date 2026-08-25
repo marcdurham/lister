@@ -1291,4 +1291,101 @@ mod tests {
             .unwrap();
         assert_eq!(is_note, Some(true), "is_note should update via upsert");
     }
+
+    #[tokio::test]
+    async fn item_created_at_not_updated_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "created at immutability").await;
+        let original_created_at = existing.created_at;
+
+        // Update with newer timestamp.
+        let updated = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            text: "updated text".to_string(),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &updated, owner).await.unwrap();
+
+        let created_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar!("SELECT created_at FROM items WHERE id = $1", existing.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // Compare timestamps with microsecond precision (Postgres truncates nanos).
+        let diff = (created_at.timestamp_micros() - original_created_at.timestamp_micros()).unsigned_abs();
+        assert!(diff < 1_000_000,
+            "created_at should not change via upsert (immutable), got {:?} vs {:?}",
+            created_at, original_created_at);
+    }
+
+    #[actix_web::test]
+    async fn sync_response_includes_both_items_and_memberships() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item_a = seed_item(&pool, owner, "sync both a").await;
+        let item_b = seed_item(&pool, owner, "sync both b").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed memberships for both items.
+        let m_a = Membership::new(item_a.id, None, 0.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m_a.id,
+            item_a.id,
+            m_a.parent_id,
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let m_b = Membership::new(item_b.id, None, 1.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m_b.id,
+            item_b.id,
+            m_b.parent_id,
+            1.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify both items and memberships come back.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        assert_eq!(body.items.len(), 2,
+            "sync should return both items, got {}", body.items.len());
+        assert_eq!(body.memberships.len(), 2,
+            "sync should return both memberships, got {}", body.memberships.len());
+    }
 }
