@@ -1055,4 +1055,81 @@ mod tests {
                 pos0, pos1);
         }
     }
+
+    #[tokio::test]
+    async fn membership_soft_delete_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "membership delete").await;
+        let m = Membership::new(item.id, None, 0.0);
+
+        // Seed membership.
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m.id,
+            item.id,
+            m.parent_id,
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Soft-delete with newer timestamp.
+        let now = Utc::now();
+        let deleted_m = Membership {
+            updated_at: m.updated_at + chrono::Duration::seconds(1),
+            deleted_at: Some(now),
+            ..m.clone()
+        };
+        upsert_membership(&pool, &deleted_m, owner).await.unwrap();
+
+        let deleted_at: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar!("SELECT deleted_at FROM memberships WHERE id = $1", m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!(deleted_at.flatten().is_some(), "membership deleted_at should be set via upsert soft-delete");
+    }
+
+    #[actix_web::test]
+    async fn sync_cursor_is_valid_timestamp() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify cursor is a valid timestamp.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        // Cursor should be a valid timestamp (not epoch zero).
+        let cursor_epoch = body.cursor.timestamp();
+        assert!(cursor_epoch > 0, "sync cursor should be a valid timestamp, got {}", cursor_epoch);
+    }
 }
