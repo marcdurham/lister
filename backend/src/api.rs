@@ -1822,6 +1822,23 @@ mod tests {
             "visible=true should be preserved through sync round-trip");
     }
 
+    #[test]
+    fn membership_serde_all_fields_round_trip() {
+        let parent_id = Uuid::new_v4();
+        let m = Membership::new(Uuid::new_v4(), Some(parent_id), 2.718);
+        assert_eq!(m.visible, true,
+            "Membership::new should default visible to true");
+
+        let json = serde_json::to_string(&m).unwrap();
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.item_id, m.item_id);
+        assert_eq!(deserialized.parent_id, Some(parent_id));
+        assert!((deserialized.position - 2.718_f64).abs() < f64::EPSILON,
+            "position should round-trip correctly");
+        assert_eq!(deserialized.visible, true,
+            "visible=true should round-trip correctly");
+    }
+
 }
 
 
