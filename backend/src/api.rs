@@ -359,4 +359,93 @@ mod tests {
         let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn upsert_membership_conflict_resolution_newer_wins() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "ordered").await;
+
+        // Seed an existing membership with position 1.0.
+        let existing_m = Membership::new(item.id, None, 1.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            existing_m.id,
+            item.id,
+            existing_m.parent_id,
+            1.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Upsert with OLDER updated_at — position should stay at 1.0.
+        let stale = Membership {
+            updated_at: existing_m.updated_at - chrono::Duration::seconds(10),
+            position: 99.0,
+            ..existing_m.clone()
+        };
+        upsert_membership(&pool, &stale, owner).await.unwrap();
+
+        let pos: Option<f64> = sqlx::query_scalar!("SELECT position FROM memberships WHERE id = $1", existing_m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!((pos.unwrap() - 1.0).abs() < f64::EPSILON, "stale upsert should not change position");
+
+        // Upsert with NEWER updated_at — position should update.
+        let fresh = Membership {
+            updated_at: existing_m.updated_at + chrono::Duration::seconds(10),
+            position: 42.0,
+            ..existing_m.clone()
+        };
+        upsert_membership(&pool, &fresh, owner).await.unwrap();
+
+        let pos: Option<f64> = sqlx::query_scalar!("SELECT position FROM memberships WHERE id = $1", existing_m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!((pos.unwrap() - 42.0).abs() < f64::EPSILON, "fresh upsert should update position");
+    }
+
+    #[actix_web::test]
+    async fn sync_returns_seeded_data() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "sync me").await;
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+        assert!(!body.items.is_empty(), "should return at least one item");
+        assert!(body.cursor > chrono::DateTime::UNIX_EPOCH,
+            "cursor should be a real timestamp, not epoch zero");
+    }
 }
