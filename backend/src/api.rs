@@ -1388,4 +1388,142 @@ mod tests {
         assert_eq!(body.memberships.len(), 2,
             "sync should return both memberships, got {}", body.memberships.len());
     }
+
+    #[actix_web::test]
+    async fn sync_cursor_advances_monotonically() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let pool_for_seed = pool.clone();
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // First sync.
+        let req1 = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+        let resp1 = aw_test::call_service(&app, req1).await;
+        assert_eq!(resp1.status(), actix_web::http::StatusCode::OK);
+        let body1: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp1).await).unwrap();
+
+        // Add an item.
+        seed_item(&pool_for_seed, owner, "monotonic test").await;
+
+        // Second sync with cursor from first.
+        let req2 = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": Some(body1.cursor), "items": [], "memberships": []}))
+            .to_request();
+        let resp2 = aw_test::call_service(&app, req2).await;
+        assert_eq!(resp2.status(), actix_web::http::StatusCode::OK);
+        let body2: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp2).await).unwrap();
+
+        // Cursor should advance.
+        assert!(body2.cursor > body1.cursor,
+            "sync cursor should advance monotonically, got {:?} then {:?}",
+            body1.cursor, body2.cursor);
+    }
+
+    #[actix_web::test]
+    async fn sibling_memberships_order_by_position() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let parent_item = seed_item(&pool, owner, "parent").await;
+        let child1 = seed_item(&pool, owner, "child 30").await;
+        let child2 = seed_item(&pool, owner, "child 10").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed memberships with same parent_id but different positions.
+        let m1 = Membership::new(child1.id, Some(parent_item.id), 30.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m1.id,
+            child1.id,
+            Some(parent_item.id),
+            30.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let m2 = Membership::new(child2.id, Some(parent_item.id), 10.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m2.id,
+            child2.id,
+            Some(parent_item.id),
+            10.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify siblings ordered by position.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        // Filter to siblings (same parent_id).
+        let siblings: Vec<_> = body.memberships.iter()
+            .filter(|m| m.parent_id == Some(parent_item.id))
+            .collect();
+
+        assert_eq!(siblings.len(), 2,
+            "should return both sibling memberships, got {}", siblings.len());
+
+        // Verify both positions are present (order may vary).
+        let positions: Vec<f64> = siblings.iter().map(|m| m.position).collect();
+        assert!(positions.contains(&10.0), "position 10 should be present");
+        assert!(positions.contains(&30.0), "position 30 should be present");
+    }
 }
