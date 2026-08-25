@@ -1916,6 +1916,25 @@ mod tests {
             "visible=false should round-trip correctly");
     }
 
+    #[test]
+    fn membership_serde_all_non_default_fields_round_trip() {
+        let parent_id = Uuid::new_v4();
+        let m = Membership::new(Uuid::new_v4(), Some(parent_id), 3.14);
+        // Manually set visible=false for this test.
+        let mut json: serde_json::Value = serde_json::to_value(&m).unwrap();
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("visible".to_string(), serde_json::Value::Bool(false));
+        }
+
+        let deserialized: Membership = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.item_id, m.item_id);
+        assert_eq!(deserialized.parent_id, Some(parent_id));
+        assert!((deserialized.position - 3.14_f64).abs() < f64::EPSILON,
+            "position=3.14 should round-trip correctly, got {}", deserialized.position);
+        assert_eq!(deserialized.visible, false,
+            "visible=false should round-trip correctly");
+    }
+
 }
 
 
