@@ -1851,6 +1851,18 @@ mod tests {
             "parent_id=null should deserialize back to None");
     }
 
+    #[test]
+    fn membership_serde_position_zero_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 0.0);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"position\":0.0") || json.contains("\"position\":0"),
+            "position=0.0 should serialize correctly in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.position - 0.0_f64).abs() < f64::EPSILON,
+            "position=0.0 should round-trip correctly");
+    }
+
 }
 
 
