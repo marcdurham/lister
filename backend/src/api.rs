@@ -1639,4 +1639,6 @@ mod tests {
         assert_eq!(membership.visible, false,
             "visible flag should persist as false through sync round-trip");
     }
+
 }
+
