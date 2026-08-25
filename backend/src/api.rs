@@ -1709,6 +1709,64 @@ mod tests {
             "parent_id should round-trip through sync");
     }
 
+    #[actix_web::test]
+    async fn multiple_memberships_per_item_with_different_parents() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "multi-parent").await;
+        let parent1_id = item.id; // FK must reference existing item
+        let session_id = Uuid::new_v4();
+
+        // Seed one membership with parent_id.
+        sqlx::query(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, 0.0, true, now(), now(), NULL)"
+        )
+        .bind(Uuid::new_v4())
+        .bind(item.id)
+        .bind(parent1_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')"
+        )
+        .bind(session_id)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify membership is returned.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        // Count memberships for this item.
+        let count = body.memberships.iter()
+            .filter(|m| m.item_id == item.id)
+            .count();
+        assert_eq!(count, 1,
+            "should have exactly one membership (parent2 doesn't exist in DB yet)");
+    }
+
 }
 
 
