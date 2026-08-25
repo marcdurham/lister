@@ -535,4 +535,63 @@ mod tests {
         assert!(texts.contains(&"new"), "should include new item");
         assert!(!texts.contains(&"old"), "should exclude old item past since cursor");
     }
+
+    #[actix_web::test]
+    async fn sync_empty_db_returns_empty_items() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+        assert!(body.items.is_empty(), "empty DB should return empty items");
+        assert!(body.memberships.is_empty(), "empty DB should return empty memberships");
+    }
+
+    #[tokio::test]
+    async fn item_done_flag_updates_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "todo").await;
+
+        // Mark as done with newer timestamp.
+        let done = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(5),
+            done: true,
+            ..existing.clone()
+        };
+        upsert_item(&pool, &done, owner).await.unwrap();
+
+        let done_flag: Option<bool> = sqlx::query_scalar!("SELECT done FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(done_flag, Some(true), "done flag should update via upsert");
+    }
 }
