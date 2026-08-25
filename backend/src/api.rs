@@ -712,4 +712,63 @@ mod tests {
         assert_eq!(parsed["highlight"], "red");
         assert_eq!(parsed["priority"], 1);
     }
+
+    #[tokio::test]
+    async fn membership_parent_id_updates_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "move").await;
+        // Create a parent item first (foreign key constraint requires it).
+        let parent_item = seed_item(&pool, owner, "parent").await;
+        let new_parent_id = parent_item.id;
+
+        // Seed membership with no parent.
+        let m = Membership::new(item.id, None, 0.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m.id,
+            item.id,
+            m.parent_id,
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Upsert with new parent.
+        let updated = Membership {
+            updated_at: m.updated_at + chrono::Duration::seconds(1),
+            parent_id: Some(new_parent_id),
+            ..m.clone()
+        };
+        upsert_membership(&pool, &updated, owner).await.unwrap();
+
+        let parent: Option<Option<Uuid>> = sqlx::query_scalar!("SELECT parent_id FROM memberships WHERE id = $1", m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(parent.flatten(), Some(new_parent_id), "parent_id should update via upsert");
+    }
+
+    #[tokio::test]
+    async fn item_is_note_flag_updates_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "toggle note").await;
+
+        // Flip is_note to true with newer timestamp.
+        let updated = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            is_note: true,
+            ..existing.clone()
+        };
+        upsert_item(&pool, &updated, owner).await.unwrap();
+
+        let is_note: Option<bool> = sqlx::query_scalar!("SELECT is_note FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(is_note, Some(true), "is_note flag should update via upsert");
+    }
 }
