@@ -643,4 +643,73 @@ mod tests {
         let resp = aw_test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::UNAUTHORIZED);
     }
+
+    #[tokio::test]
+    async fn membership_position_updates_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "reorder").await;
+
+        // Seed initial membership.
+        let m = Membership::new(item.id, None, 5.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m.id,
+            item.id,
+            m.parent_id,
+            5.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Upsert with newer timestamp and different position.
+        let updated = Membership {
+            updated_at: m.updated_at + chrono::Duration::seconds(1),
+            position: 7.5,
+            ..m.clone()
+        };
+        upsert_membership(&pool, &updated, owner).await.unwrap();
+
+        let pos: Option<f64> = sqlx::query_scalar!("SELECT position FROM memberships WHERE id = $1", m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert!((pos.unwrap() - 7.5).abs() < f64::EPSILON, "position should update to 7.5");
+    }
+
+    #[tokio::test]
+    async fn item_notes_persist_through_db() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let notes_json = serde_json::json!({"highlight": "red", "priority": 1});
+        let item_id = Uuid::new_v4();
+
+        let now = Utc::now();
+        sqlx::query(
+            "INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, owner_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+        )
+        .bind(item_id)
+        .bind("with notes")
+        .bind(notes_json.to_string())
+        .bind(false)
+        .bind(false)
+        .bind(now.naive_utc())
+        .bind(now.naive_utc())
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let notes: Option<Option<String>> = sqlx::query_scalar!("SELECT notes FROM items WHERE id = $1", item_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        let notes_str = notes.flatten().expect("notes should persist");
+        let parsed: serde_json::Value = serde_json::from_str(&notes_str).unwrap();
+        assert_eq!(parsed["highlight"], "red");
+        assert_eq!(parsed["priority"], 1);
+    }
 }
