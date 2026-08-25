@@ -2056,6 +2056,24 @@ mod tests {
             "position=NAN should serialize correctly in JSON, got: {}", json);
     }
 
+    #[test]
+    fn membership_serde_infinity_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, f64::INFINITY);
+        let json = serde_json::to_string(&m).unwrap();
+        // Serde serializes Infinity as "Infinity" string
+        assert!(json.contains("\"position\":Infinity") || json.contains("\"position\":null"),
+            "position=INFINITY should serialize correctly in JSON, got: {}", json);
+    }
+
+    #[test]
+    fn membership_serde_negative_infinity_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, f64::NEG_INFINITY);
+        let json = serde_json::to_string(&m).unwrap();
+        // Serde serializes -Infinity as "-Infinity" string
+        assert!(json.contains("\"position\":-Infinity") || json.contains("\"position\":null"),
+            "position=-INFINITY should serialize correctly in JSON, got: {}", json);
+    }
+
 }
 
 
