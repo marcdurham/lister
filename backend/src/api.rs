@@ -1971,6 +1971,18 @@ mod tests {
             "position=0.25 should round-trip correctly, got {}", deserialized.position);
     }
 
+    #[test]
+    fn membership_serde_position_one_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 1.0);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"position\":1.0") || json.contains("\"position\":1"),
+            "position=1.0 should serialize correctly in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.position - 1.0_f64).abs() < f64::EPSILON,
+            "position=1.0 should round-trip correctly, got {}", deserialized.position);
+    }
+
 }
 
 
