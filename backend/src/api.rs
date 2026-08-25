@@ -1839,6 +1839,18 @@ mod tests {
             "visible=true should round-trip correctly");
     }
 
+    #[test]
+    fn membership_serde_parent_id_none_serializes_to_null() {
+        let m = Membership::new(Uuid::new_v4(), None, 0.0);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"parent_id\":null"),
+            "parent_id=None should serialize to null in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.parent_id, None,
+            "parent_id=null should deserialize back to None");
+    }
+
 }
 
 
