@@ -1887,6 +1887,18 @@ mod tests {
             "position=1e10 should round-trip correctly, got {}", deserialized.position);
     }
 
+    #[test]
+    fn membership_serde_small_decimal_position_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 0.0001);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"position\":0.0001") || json.contains("\"position\":1e-4"),
+            "position=0.0001 should serialize correctly in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.position - 0.0001_f64).abs() < f64::EPSILON,
+            "position=0.0001 should round-trip correctly, got {}", deserialized.position);
+    }
+
 }
 
 
