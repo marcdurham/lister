@@ -1899,6 +1899,23 @@ mod tests {
             "position=0.0001 should round-trip correctly, got {}", deserialized.position);
     }
 
+    #[test]
+    fn membership_serde_visible_false_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 0.0);
+        // Manually set visible=false for this test.
+        let mut json: serde_json::Value = serde_json::to_value(&m).unwrap();
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("visible".to_string(), serde_json::Value::Bool(false));
+        }
+        let serialized = serde_json::to_string(&json).unwrap();
+        assert!(serialized.contains("\"visible\":false"),
+            "visible=false should serialize correctly in JSON, got: {}", serialized);
+
+        let deserialized: Membership = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.visible, false,
+            "visible=false should round-trip correctly");
+    }
+
 }
 
 
