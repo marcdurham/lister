@@ -1211,4 +1211,84 @@ mod tests {
             .unwrap();
         assert_eq!(notes.flatten(), Some(new_notes.to_string()), "notes should update via upsert");
     }
+
+    #[actix_web::test]
+    async fn membership_parent_id_round_trips_via_sync() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let parent_item = seed_item(&pool, owner, "parent").await;
+        let child_item = seed_item(&pool, owner, "child").await;
+        let session_id = Uuid::new_v4();
+
+        // Seed membership with parent_id pointing to parent item.
+        let m = Membership::new(child_item.id, Some(parent_item.id), 0.0);
+        sqlx::query!(
+            "INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, true, now(), now(), NULL)",
+            m.id,
+            child_item.id,
+            Some(parent_item.id),
+            0.0_f64,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync and verify parent_id comes back.
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+
+        let membership = body.memberships.iter()
+            .find(|m| m.item_id == child_item.id)
+            .expect("membership should be in response");
+        assert_eq!(membership.parent_id, Some(parent_item.id),
+            "parent_id should round-trip via sync");
+    }
+
+    #[tokio::test]
+    async fn item_is_note_true_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "note flag").await;
+
+        // Flip is_note to true with newer timestamp.
+        let updated = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            is_note: true,
+            ..existing.clone()
+        };
+        upsert_item(&pool, &updated, owner).await.unwrap();
+
+        let is_note: Option<bool> = sqlx::query_scalar!("SELECT is_note FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(is_note, Some(true), "is_note should update via upsert");
+    }
 }
