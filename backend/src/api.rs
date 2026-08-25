@@ -1995,6 +1995,19 @@ mod tests {
             "position=2.0 should round-trip correctly, got {}", deserialized.position);
     }
 
+    #[test]
+    fn membership_serde_position_scientific_notation_serializes_correctly() {
+        let m = Membership::new(Uuid::new_v4(), None, 1e-3);
+        let json = serde_json::to_string(&m).unwrap();
+        // Serde may serialize as 0.001 or 1e-3
+        assert!(json.contains("\"position\":0.001") || json.contains("\"position\":1e-3"),
+            "position=1e-3 should serialize correctly in JSON, got: {}", json);
+
+        let deserialized: Membership = serde_json::from_str(&json).unwrap();
+        assert!((deserialized.position - 0.001_f64).abs() < f64::EPSILON,
+            "position=1e-3 should round-trip correctly, got {}", deserialized.position);
+    }
+
 }
 
 
