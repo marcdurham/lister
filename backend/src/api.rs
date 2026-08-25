@@ -140,3 +140,165 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
         cursor: Utc::now(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test as aw_test;
+    use sqlx::PgPool;
+    use uuid::Uuid;
+
+    async fn test_pool() -> PgPool {
+        let url = std::env::var("LISTER_TEST_DB").unwrap_or_else(|_| {
+            "postgres://marc@127.0.0.1:5433/lister_test".into()
+        });
+        PgPool::connect(&url).await.expect("connect to test db")
+    }
+
+    async fn seed_owner(pool: &PgPool) -> Uuid {
+        let id = Uuid::new_v4();
+        let email = format!("test-{}@example.com", id);
+        sqlx::query!(
+            "INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, now())",
+            id,
+            email,
+            "$argon2id$v=19$m=15000$...",
+        )
+        .execute(pool)
+        .await
+        .expect("insert user");
+        id
+    }
+
+    async fn seed_item(pool: &PgPool, owner_id: Uuid, text: &str) -> Item {
+        let item = Item::new(text.into(), false);
+        sqlx::query!(
+            "INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, deleted_at, owner_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            item.id,
+            item.text,
+            item.notes,
+            item.is_note,
+            item.done,
+            item.created_at,
+            item.updated_at,
+            item.deleted_at,
+            owner_id,
+        )
+        .execute(pool)
+        .await
+        .expect("insert item");
+        item
+    }
+
+    #[tokio::test]
+    async fn upsert_item_conflict_resolution_newer_wins() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "original").await;
+
+        // Upsert with OLDER updated_at — should NOT overwrite.
+        let stale = Item {
+            updated_at: existing.updated_at - chrono::Duration::seconds(10),
+            text: "stale".into(),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &stale, owner).await.unwrap();
+
+        let row: Option<String> = sqlx::query_scalar!("SELECT text FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.as_deref(), Some("original"));
+
+        // Upsert with NEWER updated_at — should overwrite.
+        let fresh = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(10),
+            text: "fresh".into(),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &fresh, owner).await.unwrap();
+
+        let row: Option<String> = sqlx::query_scalar!("SELECT text FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.as_deref(), Some("fresh"));
+    }
+
+    #[tokio::test]
+    async fn upsert_item_cross_owner_stale_ignored() {
+        let pool = test_pool().await;
+        let owner_a = seed_owner(&pool).await;
+        let owner_b = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner_a, "a's item").await;
+
+        // Owner B tries to upsert with newer timestamp — should NOT overwrite because
+        // the WHERE clause requires items.owner_id == EXCLUDED.owner_id.
+        let fresh = Item {
+            updated_at: item.updated_at + chrono::Duration::seconds(10),
+            text: "b's lie".into(),
+            ..item.clone()
+        };
+        upsert_item(&pool, &fresh, owner_b).await.unwrap();
+
+        let row: Option<String> = sqlx::query_scalar!("SELECT text FROM items WHERE id = $1", item.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.as_deref(), Some("a's item"));
+    }
+
+    #[tokio::test]
+    async fn upsert_membership_ownership_check() {
+        let pool = test_pool().await;
+        let owner_a = seed_owner(&pool).await;
+        let owner_b = seed_owner(&pool).await;
+        let item_a = seed_item(&pool, owner_a, "owned by A").await;
+
+        // Upsert membership for an item owned by someone else — should be silently dropped.
+        let membership = Membership::new(item_a.id, None, 1.0);
+        upsert_membership(&pool, &membership, owner_b).await.unwrap();
+
+        let count: Option<i64> = sqlx::query_scalar!("SELECT count(*) FROM memberships WHERE id = $1", membership.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, Some(0), "cross-owner membership should be silently dropped");
+    }
+
+    #[tokio::test]
+    async fn upsert_membership_own_item_works() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "mine").await;
+
+        let membership = Membership::new(item.id, None, 2.5);
+        upsert_membership(&pool, &membership, owner).await.unwrap();
+
+        let count: Option<i64> = sqlx::query_scalar!("SELECT count(*) FROM memberships WHERE id = $1", membership.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, Some(1));
+    }
+
+    #[actix_web::test]
+    async fn sync_endpoint_requires_auth() {
+        let pool = test_pool().await;
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::UNAUTHORIZED);
+    }
+}

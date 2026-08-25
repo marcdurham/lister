@@ -71,3 +71,63 @@ pub struct SyncResponse {
     pub memberships: Vec<Membership>,
     pub cursor: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn item_new_sets_defaults() {
+        let item = Item::new("hello".into(), false);
+        assert_eq!(item.text, "hello");
+        assert!(!item.is_note);
+        assert!(!item.done);
+        assert_eq!(item.notes, None);
+        assert!(item.deleted_at.is_none());
+        // id is a fresh v4 uuid (non-zero)
+        assert_ne!(item.id, Uuid::nil());
+        // timestamps are set and within 2 seconds of now
+        let now = Utc::now();
+        let window = Duration::seconds(2);
+        assert!(item.created_at >= now - window && item.created_at <= now + window);
+        assert!(item.updated_at >= now - window && item.updated_at <= now + window);
+    }
+
+    #[test]
+    fn item_new_sets_is_note_flag() {
+        let note = Item::new("note".into(), true);
+        assert!(note.is_note);
+        assert!(!note.done);
+        assert_eq!(note.notes, None);
+    }
+
+    #[test]
+    fn membership_new_sets_defaults() {
+        let parent = Uuid::new_v4();
+        let item_id = Uuid::new_v4();
+        let m = Membership::new(item_id, Some(parent), 3.14);
+        assert_eq!(m.item_id, item_id);
+        assert_eq!(m.parent_id, Some(parent));
+        assert!((m.position - 3.14).abs() < f64::EPSILON);
+        assert!(m.visible);
+        assert!(m.deleted_at.is_none());
+        assert_ne!(m.id, Uuid::nil());
+    }
+
+    #[test]
+    fn membership_new_nil_parent() {
+        let item_id = Uuid::new_v4();
+        let m = Membership::new(item_id, None, 0.0);
+        assert_eq!(m.parent_id, None);
+        assert!((m.position - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn sync_request_defaults() {
+        let req = SyncRequest::default();
+        assert!(req.since.is_none());
+        assert!(req.items.is_empty());
+        assert!(req.memberships.is_empty());
+    }
+}
