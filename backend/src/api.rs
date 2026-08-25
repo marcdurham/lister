@@ -448,4 +448,91 @@ mod tests {
         assert!(body.cursor > chrono::DateTime::UNIX_EPOCH,
             "cursor should be a real timestamp, not epoch zero");
     }
+
+    #[tokio::test]
+    async fn membership_visible_false_persists() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let item = seed_item(&pool, owner, "hidden").await;
+
+        let m = Membership::new(item.id, None, 0.0);
+        upsert_membership(&pool, &m, owner).await.unwrap();
+
+        // Flip visible to false via a fresh membership with newer timestamp.
+        let hidden = Membership {
+            updated_at: m.updated_at + chrono::Duration::seconds(1),
+            visible: false,
+            ..m.clone()
+        };
+        upsert_membership(&pool, &hidden, owner).await.unwrap();
+
+        let vis: Option<bool> = sqlx::query_scalar!("SELECT visible FROM memberships WHERE id = $1", m.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(vis, Some(false), "visible=false should persist through upsert");
+    }
+
+    #[actix_web::test]
+    async fn sync_filters_by_since() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        // Seed two items: one old, one new.
+        let old_ts = Utc::now() - chrono::Duration::days(2);
+        let old_item_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, deleted_at, owner_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8)"
+        )
+        .bind(old_item_id)
+        .bind("old")
+        .bind(None::<String>)
+        .bind(false)
+        .bind(false)
+        .bind(old_ts.naive_utc())
+        .bind(old_ts.naive_utc())
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let new_item = seed_item(&pool, owner, "new").await;
+
+        // Create session.
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // Sync with since=now-1day should only return the new item.
+        let since = Utc::now() - chrono::Duration::days(1);
+        let req = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": since.to_rfc3339(), "items": [], "memberships": []}))
+            .to_request();
+
+        let resp = aw_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp).await).unwrap();
+        let texts: Vec<&str> = body.items.iter().map(|i| i.text.as_str()).collect();
+        assert!(texts.contains(&"new"), "should include new item");
+        assert!(!texts.contains(&"old"), "should exclude old item past since cursor");
+    }
 }
