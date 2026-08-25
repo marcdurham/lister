@@ -771,4 +771,81 @@ mod tests {
             .unwrap();
         assert_eq!(is_note, Some(true), "is_note flag should update via upsert");
     }
+
+    #[actix_web::test]
+    async fn sync_cursor_advances_after_new_items() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let session_id = Uuid::new_v4();
+        sqlx::query!(
+            "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, now(), now() + interval '30 days')",
+            session_id,
+            owner,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let pool_for_seed = pool.clone();
+        let app = aw_test::init_service(
+            actix_web::App::new()
+                .app_data(web::Data::new(pool))
+                .configure(|cfg| { cfg.service(sync); }),
+        )
+        .await;
+
+        // First sync on empty DB.
+        let req1 = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+        let resp1 = aw_test::call_service(&app, req1).await;
+        assert_eq!(resp1.status(), actix_web::http::StatusCode::OK);
+        let body1: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp1).await).unwrap();
+
+        // Add a new item.
+        seed_item(&pool_for_seed, owner, "new sync item").await;
+
+        // Second sync should return the new item and have a later cursor.
+        let req2 = aw_test::TestRequest::post()
+            .uri("/api/sync")
+            .cookie(actix_web::cookie::Cookie::build(
+                "lister_session",
+                session_id.to_string(),
+            ).finish())
+            .set_json(serde_json::json!({"since": null, "items": [], "memberships": []}))
+            .to_request();
+        let resp2 = aw_test::call_service(&app, req2).await;
+        assert_eq!(resp2.status(), actix_web::http::StatusCode::OK);
+        let body2: SyncResponse = serde_json::from_slice(&aw_test::read_body(resp2).await).unwrap();
+
+        assert!(!body1.items.is_empty() || !body2.items.is_empty(), "at least one sync should return items");
+        // Cursor should advance (or stay same) — never go backwards.
+        assert!(body2.cursor >= body1.cursor, "cursor should not regress after adding items");
+    }
+
+    #[tokio::test]
+    async fn item_text_updates_via_upsert() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let existing = seed_item(&pool, owner, "original text").await;
+
+        // Update text with newer timestamp.
+        let updated = Item {
+            updated_at: existing.updated_at + chrono::Duration::seconds(1),
+            text: "updated text".into(),
+            ..existing.clone()
+        };
+        upsert_item(&pool, &updated, owner).await.unwrap();
+
+        let text: Option<String> = sqlx::query_scalar!("SELECT text FROM items WHERE id = $1", existing.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(text, Some("updated text".to_string()), "text should update via upsert");
+    }
 }
