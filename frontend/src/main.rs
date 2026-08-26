@@ -139,6 +139,7 @@ fn app() -> Html {
     };
 
     let trash_count = state.trashed_items().len();
+    let unsynced_count = if state.online { 0 } else { store::unsynced_count() };
 
     let current_parent = path.last().copied();
     let rows = state.children(current_parent, *show_hidden);
@@ -167,6 +168,11 @@ fn app() -> Html {
                     </button>
                     <div class={classes!("status", if state.online { "online" } else { "offline" })}>
                         { if state.online { "online" } else { "offline" } }
+                        { if !state.online && unsynced_count > 0 {
+                            html! { <span class="unsynced-count">{ unsynced_count }</span> }
+                        } else {
+                            html! {}
+                        }}
                         { if state.syncing { " · syncing" } else { "" } }
                     </div>
                     <span class="user-email">{ &user.email }</span>

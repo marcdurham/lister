@@ -292,6 +292,17 @@ header h1 {
     text-align: center;
 }
 
+.unsynced-count {
+    font-size: 0.7rem;
+    color: #fff;
+    background: #c92a2a;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    min-width: 1em;
+    text-align: center;
+    margin-left: 0.35rem;
+}
+
 .open-btn {
     border: none;
     background: transparent;

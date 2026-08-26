@@ -108,6 +108,17 @@ pub fn clear_all() {
     LocalStorage::delete(CURSOR_KEY);
 }
 
+pub fn unsynced_count() -> usize {
+    load_items()
+        .into_values()
+        .filter(|r| r.dirty)
+        .count()
+        + load_memberships()
+            .into_values()
+            .filter(|r| r.dirty)
+            .count()
+}
+
 /// Merge server-pulled rows into local storage. A row that's still locally dirty (an
 /// unsynced local edit) is never clobbered by an incoming pull - it wins until it syncs.
 pub fn apply_pulled(items: Vec<Item>, memberships: Vec<Membership>) {
