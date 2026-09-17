@@ -4,6 +4,7 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use chrono::{Duration, Utc};
+use log;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -21,6 +22,40 @@ pub struct Credentials {
 pub struct UserView {
     pub id: Uuid,
     pub email: String,
+    pub is_admin: bool,
+}
+
+#[derive(Serialize)]
+pub struct PendingView {
+    pub status: &'static str,
+}
+
+/// Emails from DEFAULT_ADMINISTRATORS (comma-separated), lowercased and trimmed. These
+/// accounts are auto-approved as admins the moment they register, and re-synced to admin
+/// status on every server start in case they registered before being added to the list.
+fn default_admin_emails() -> Vec<String> {
+    std::env::var("DEFAULT_ADMINISTRATORS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+pub async fn seed_default_admins(pool: &PgPool) {
+    let emails = default_admin_emails();
+    if emails.is_empty() {
+        return;
+    }
+    if let Err(err) = sqlx::query!(
+        "UPDATE users SET is_admin = true, status = 'approved' WHERE email = ANY($1)",
+        &emails,
+    )
+    .execute(pool)
+    .await
+    {
+        log::warn!("failed to seed default admins: {err}");
+    }
 }
 
 fn hash_password(password: &str) -> Result<String, ()> {
@@ -92,12 +127,18 @@ pub async fn register(pool: web::Data<PgPool>, body: web::Json<Credentials>) -> 
 
     let user_id = Uuid::new_v4();
     let now = Utc::now();
+    // The site is invite-only: anyone matching DEFAULT_ADMINISTRATORS is auto-approved as
+    // an admin, everyone else lands as "pending" until an admin approves them.
+    let is_admin = default_admin_emails().contains(&email);
+    let status = if is_admin { "approved" } else { "pending" };
     let inserted = sqlx::query!(
-        "INSERT INTO users (id, email, password_hash, created_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO users (id, email, password_hash, created_at, is_admin, status) VALUES ($1, $2, $3, $4, $5, $6)",
         user_id,
         email,
         password_hash,
         now,
+        is_admin,
+        status,
     )
     .execute(pool.get_ref())
     .await;
@@ -126,6 +167,10 @@ pub async fn register(pool: web::Data<PgPool>, body: web::Json<Credentials>) -> 
         .await;
     }
 
+    if status != "approved" {
+        return HttpResponse::Accepted().json(PendingView { status: "pending" });
+    }
+
     let session_id = match create_session(pool.get_ref(), user_id).await {
         Ok(id) => id,
         Err(err) => return HttpResponse::InternalServerError().body(format!("session failed: {err}")),
@@ -133,14 +178,18 @@ pub async fn register(pool: web::Data<PgPool>, body: web::Json<Credentials>) -> 
 
     HttpResponse::Ok()
         .cookie(session_cookie(session_id))
-        .json(UserView { id: user_id, email })
+        .json(UserView {
+            id: user_id,
+            email,
+            is_admin,
+        })
 }
 
 #[post("/api/auth/login")]
 pub async fn login(pool: web::Data<PgPool>, body: web::Json<Credentials>) -> impl Responder {
     let email = body.email.trim().to_lowercase();
     let user = sqlx::query!(
-        "SELECT id, password_hash FROM users WHERE email = $1",
+        "SELECT id, password_hash, is_admin, status FROM users WHERE email = $1",
         email,
     )
     .fetch_optional(pool.get_ref())
@@ -156,14 +205,25 @@ pub async fn login(pool: web::Data<PgPool>, body: web::Json<Credentials>) -> imp
         return HttpResponse::Unauthorized().body("invalid email or password");
     }
 
+    match user.status.as_str() {
+        "disabled" => return HttpResponse::Forbidden().body("This account has been disabled."),
+        "pending" => {
+            return HttpResponse::Forbidden()
+                .body("Your account is awaiting administrator approval.")
+        }
+        _ => {}
+    }
+
     let session_id = match create_session(pool.get_ref(), user.id).await {
         Ok(id) => id,
         Err(err) => return HttpResponse::InternalServerError().body(format!("session failed: {err}")),
     };
 
-    HttpResponse::Ok()
-        .cookie(session_cookie(session_id))
-        .json(UserView { id: user.id, email })
+    HttpResponse::Ok().cookie(session_cookie(session_id)).json(UserView {
+        id: user.id,
+        email,
+        is_admin: user.is_admin,
+    })
 }
 
 #[post("/api/auth/logout")]
@@ -185,13 +245,17 @@ pub async fn me(pool: web::Data<PgPool>, req: HttpRequest) -> impl Responder {
     let Some(user_id) = current_user_id(&req, pool.get_ref()).await else {
         return HttpResponse::Unauthorized().finish();
     };
-    match sqlx::query!("SELECT email FROM users WHERE id = $1", user_id)
-        .fetch_optional(pool.get_ref())
-        .await
+    match sqlx::query!(
+        "SELECT email, is_admin, status FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await
     {
-        Ok(Some(row)) => HttpResponse::Ok().json(UserView {
+        Ok(Some(row)) if row.status == "approved" => HttpResponse::Ok().json(UserView {
             id: user_id,
             email: row.email,
+            is_admin: row.is_admin,
         }),
         _ => HttpResponse::Unauthorized().finish(),
     }

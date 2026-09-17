@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod backup;
 mod components;
@@ -8,8 +9,8 @@ mod store;
 mod sync;
 
 use components::{
-    AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow, SettingsMenu,
-    TrashView,
+    AdminPage, AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow,
+    SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -34,6 +35,7 @@ fn app() -> Html {
     let show_hidden = use_state(|| false);
     let editing = use_state(|| None::<(Uuid, Uuid)>);
     let show_trash = use_state(|| false);
+    let show_admin = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
 
@@ -159,6 +161,15 @@ fn app() -> Html {
         Callback::from(move |_: ()| show_trash.set(false))
     };
 
+    let open_admin = {
+        let show_admin = show_admin.clone();
+        Callback::from(move |_: ()| show_admin.set(true))
+    };
+    let close_admin = {
+        let show_admin = show_admin.clone();
+        Callback::from(move |_: ()| show_admin.set(false))
+    };
+
     let close_google_import = {
         let google_import = google_import.clone();
         Callback::from(move |_: ()| google_import.set(None))
@@ -201,14 +212,16 @@ fn app() -> Html {
                         { if state.syncing { " · syncing" } else { "" } }
                     </div>
                     <span class="user-email">{ &user.email }</span>
-                    <SettingsMenu state={state.clone()} />
+                    <SettingsMenu state={state.clone()} is_admin={user.is_admin} on_open_admin={open_admin} />
                     <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
                 </div>
             </header>
             if let Some(lists) = (*google_import).clone() {
                 <GoogleImportDialog state={state.clone()} lists={lists} on_close={close_google_import} />
             }
-            if *show_trash {
+            if *show_admin {
+                <AdminPage current_user_id={user.id.clone()} on_close={close_admin} />
+            } else if *show_trash {
                 <TrashView state={state.clone()} on_close={close_trash} />
             } else {
                 <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />

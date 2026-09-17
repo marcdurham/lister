@@ -1,3 +1,4 @@
+use crate::admin;
 use crate::auth;
 use crate::backup;
 use crate::google::{self, ImportedTaskList};
@@ -88,6 +89,7 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
     let email = use_state(String::new);
     let password = use_state(String::new);
     let error = use_state(|| None::<String>);
+    let info = use_state(|| None::<String>);
     let busy = use_state(|| false);
 
     let on_email = {
@@ -108,9 +110,11 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
     let toggle_mode = {
         let mode_register = mode_register.clone();
         let error = error.clone();
+        let info = info.clone();
         Callback::from(move |_: MouseEvent| {
             mode_register.set(!*mode_register);
             error.set(None);
+            info.set(None);
         })
     };
 
@@ -119,6 +123,7 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
         let password = password.clone();
         let mode_register = mode_register.clone();
         let error = error.clone();
+        let info = info.clone();
         let busy = busy.clone();
         let on_authed = props.on_authed.clone();
         Callback::from(move |e: MouseEvent| {
@@ -130,23 +135,28 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
             let password_v = (*password).clone();
             let is_register = *mode_register;
             let error = error.clone();
+            let info = info.clone();
             let busy = busy.clone();
             let on_authed = on_authed.clone();
             busy.set(true);
             spawn_local(async move {
-                let result = if is_register {
-                    auth::register(&email_v, &password_v).await
-                } else {
-                    auth::login(&email_v, &password_v).await
-                };
-                busy.set(false);
-                match result {
-                    Ok(user) => {
-                        error.set(None);
-                        on_authed.emit(user);
+                error.set(None);
+                info.set(None);
+                if is_register {
+                    match auth::register(&email_v, &password_v).await {
+                        Ok(auth::RegisterOutcome::LoggedIn(user)) => on_authed.emit(user),
+                        Ok(auth::RegisterOutcome::Pending) => info.set(Some(
+                            "Account created. An administrator needs to approve it before you can sign in.".to_string(),
+                        )),
+                        Err(msg) => error.set(Some(msg)),
                     }
-                    Err(msg) => error.set(Some(msg)),
+                } else {
+                    match auth::login(&email_v, &password_v).await {
+                        Ok(user) => on_authed.emit(user),
+                        Err(msg) => error.set(Some(msg)),
+                    }
                 }
+                busy.set(false);
             });
         })
     };
@@ -166,6 +176,9 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
                 </label>
                 if let Some(msg) = &*error {
                     <p class="auth-error">{ msg }</p>
+                }
+                if let Some(msg) = &*info {
+                    <p class="auth-info">{ msg }</p>
                 }
                 <button class="auth-submit" type="submit" onclick={submit} disabled={*busy}>
                     { if *busy { "Please wait..." } else if *mode_register { "Create account" } else { "Sign in" } }
@@ -824,9 +837,208 @@ pub fn trash_view(props: &TrashViewProps) -> Html {
     }
 }
 
+async fn refresh_admin_users(
+    users: UseStateHandle<Option<Vec<admin::AdminUser>>>,
+    error: UseStateHandle<Option<String>>,
+) {
+    match admin::list_users().await {
+        Ok(list) => users.set(Some(list)),
+        Err(msg) => error.set(Some(msg)),
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct AdminPageProps {
+    pub current_user_id: String,
+    pub on_close: Callback<()>,
+}
+
+#[function_component(AdminPage)]
+pub fn admin_page(props: &AdminPageProps) -> Html {
+    let users = use_state(|| None::<Vec<admin::AdminUser>>);
+    let error = use_state(|| None::<String>);
+
+    {
+        let users = users.clone();
+        let error = error.clone();
+        use_effect_with((), move |_| {
+            spawn_local(refresh_admin_users(users, error));
+            || ()
+        });
+    }
+
+    let close = {
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| on_close.emit(()))
+    };
+
+    let current_user_id = props.current_user_id.clone();
+
+    html! {
+        <div class="trash-view admin-page">
+            <div class="trash-header">
+                <h2>{ "Admin" }</h2>
+                <button onclick={close}>{ "Back" }</button>
+            </div>
+            if let Some(msg) = &*error {
+                <p class="auth-error">{ msg }</p>
+            }
+            {
+                match &*users {
+                    None => html! { <p class="empty">{ "Loading..." }</p> },
+                    Some(list) if list.is_empty() => html! { <p class="empty">{ "No accounts yet." }</p> },
+                    Some(list) => html! {
+                        <ul class="admin-user-list">
+                            { for list.iter().map(|u| {
+                                let is_self = u.id.to_string() == current_user_id;
+
+                                let approve = {
+                                    let id = u.id;
+                                    let users = users.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let users = users.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            if let Err(msg) = admin::set_status(id, "approved").await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_admin_users(users, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+
+                                let disable = {
+                                    let id = u.id;
+                                    let users = users.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let users = users.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            if let Err(msg) = admin::set_status(id, "disabled").await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_admin_users(users, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+
+                                let enable = {
+                                    let id = u.id;
+                                    let users = users.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let users = users.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            if let Err(msg) = admin::set_status(id, "approved").await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_admin_users(users, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+
+                                let toggle_admin = {
+                                    let id = u.id;
+                                    let make_admin = !u.is_admin;
+                                    let users = users.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let users = users.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            if let Err(msg) = admin::set_admin(id, make_admin).await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_admin_users(users, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+
+                                let delete = {
+                                    let id = u.id;
+                                    let email = u.email.clone();
+                                    let users = users.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let confirmed = web_sys::window()
+                                            .and_then(|w| {
+                                                w.confirm_with_message(&format!(
+                                                    "Delete the account \"{email}\" and all of its data? This cannot be undone."
+                                                ))
+                                                .ok()
+                                            })
+                                            .unwrap_or(false);
+                                        if !confirmed {
+                                            return;
+                                        }
+                                        let users = users.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            if let Err(msg) = admin::delete_user(id).await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_admin_users(users, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+
+                                html! {
+                                    <li class="admin-user-row" key={u.id.to_string()}>
+                                        <div class="admin-user-info">
+                                            <span class="admin-user-email">{ &u.email }</span>
+                                            <span class={classes!("admin-user-status", format!("status-{}", u.status))}>
+                                                { &u.status }
+                                            </span>
+                                            if u.is_admin {
+                                                <span class="admin-user-badge">{ "admin" }</span>
+                                            }
+                                            if is_self {
+                                                <span class="admin-user-you">{ "(you)" }</span>
+                                            }
+                                        </div>
+                                        <div class="admin-user-actions">
+                                            if u.status == "pending" {
+                                                <button onclick={approve}>{ "Approve" }</button>
+                                            }
+                                            if u.status == "approved" && !is_self {
+                                                <button onclick={disable}>{ "Disable" }</button>
+                                            }
+                                            if u.status == "disabled" {
+                                                <button onclick={enable}>{ "Enable" }</button>
+                                            }
+                                            if !is_self {
+                                                <button onclick={toggle_admin}>
+                                                    { if u.is_admin { "Remove admin" } else { "Make admin" } }
+                                                </button>
+                                            }
+                                            if !is_self {
+                                                <button class="remove" onclick={delete}>{ "Delete" }</button>
+                                            }
+                                        </div>
+                                    </li>
+                                }
+                            }) }
+                        </ul>
+                    },
+                }
+            }
+        </div>
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub struct SettingsMenuProps {
     pub state: UseReducerHandle<AppState>,
+    pub is_admin: bool,
+    pub on_open_admin: Callback<()>,
 }
 
 #[function_component(SettingsMenu)]
@@ -837,6 +1049,15 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
     let toggle = {
         let open = open.clone();
         Callback::from(move |_: MouseEvent| open.set(!*open))
+    };
+
+    let open_admin = {
+        let open = open.clone();
+        let on_open_admin = props.on_open_admin.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            on_open_admin.emit(());
+        })
     };
 
     let import_google = {
@@ -939,6 +1160,11 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                     <button class="settings-item" onclick={choose_import_file}>
                         { "Import tasks (JSON)" }
                     </button>
+                    if props.is_admin {
+                        <button class="settings-item" onclick={open_admin}>
+                            { "Admin" }
+                        </button>
+                    }
                 </div>
             }
             <input

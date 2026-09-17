@@ -31,6 +31,7 @@ jobs:
           [ -z "${{ vars.GOOGLE_REDIRECT_URI }}" ]     && missing+=("GOOGLE_REDIRECT_URI (variable)")
           [ -z "${{ vars.SSH_USER }}" ]             && missing+=("SSH_USER (variable)")
           [ -z "${{ vars.DEPLOYMENT_HOST }}" ]      && missing+=("DEPLOYMENT_HOST (variable)")
+          [ -z "${{ vars.DEFAULT_ADMINISTRATORS }}" ] && missing+=("DEFAULT_ADMINISTRATORS (variable)")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "Missing required configuration:"
             printf '  - %s\n' "${missing[@]}"
@@ -61,9 +62,10 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI: ${{ vars.GOOGLE_REDIRECT_URI }}
+          DEFAULT_ADMINISTRATORS: ${{ vars.DEFAULT_ADMINISTRATORS }}
         run: |
           ssh -o StrictHostKeyChecking=yes "${{ vars.SSH_USER }}@${{ vars.DEPLOYMENT_HOST }}" \
-            "POSTGRES_PASSWORD='${POSTGRES_PASSWORD}' GOOGLE_CLIENT_ID='${GOOGLE_CLIENT_ID}' GOOGLE_CLIENT_SECRET='${GOOGLE_CLIENT_SECRET}' GOOGLE_REDIRECT_URI='${GOOGLE_REDIRECT_URI}' bash -s" << 'ENDSSH'
+            "POSTGRES_PASSWORD='${POSTGRES_PASSWORD}' GOOGLE_CLIENT_ID='${GOOGLE_CLIENT_ID}' GOOGLE_CLIENT_SECRET='${GOOGLE_CLIENT_SECRET}' GOOGLE_REDIRECT_URI='${GOOGLE_REDIRECT_URI}' DEFAULT_ADMINISTRATORS='${DEFAULT_ADMINISTRATORS}' bash -s" << 'ENDSSH'
           set -e
           cd ~/lister
           docker compose up --build -d --remove-orphans

@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 pub struct User {
     pub id: String,
     pub email: String,
+    pub is_admin: bool,
+}
+
+/// What happens right after submitting the registration form: either the account is a
+/// default admin and is logged straight in, or it's invite-only and waits for approval.
+pub enum RegisterOutcome {
+    LoggedIn(User),
+    Pending,
 }
 
 #[derive(Serialize)]
@@ -41,15 +49,20 @@ pub async fn login(email: &str, password: &str) -> Result<User, String> {
     }
 }
 
-pub async fn register(email: &str, password: &str) -> Result<User, String> {
+pub async fn register(email: &str, password: &str) -> Result<RegisterOutcome, String> {
     let resp = Request::post("/api/auth/register")
         .json(&Credentials { email, password })
         .map_err(|e| e.to_string())?
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        resp.json().await.map_err(|e| e.to_string())
+    if resp.status() == 202 {
+        Ok(RegisterOutcome::Pending)
+    } else if resp.ok() {
+        resp.json()
+            .await
+            .map(RegisterOutcome::LoggedIn)
+            .map_err(|e| e.to_string())
     } else {
         Err(error_message(resp).await)
     }

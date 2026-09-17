@@ -26,6 +26,9 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8400/api/google/callback}
+      # Comma-separated emails that are auto-approved as admins on registration (and
+      # re-synced to admin status on every start, in case they registered earlier).
+      DEFAULT_ADMINISTRATORS: ${DEFAULT_ADMINISTRATORS:-}
     ports:
       - "8400:8080"
 

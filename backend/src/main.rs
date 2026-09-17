@@ -1,3 +1,4 @@
+mod admin;
 mod api;
 mod auth;
 mod db;
@@ -29,6 +30,7 @@ async fn main() -> std::io::Result<()> {
     println!("Lister backend listening on http://{bind_addr}");
 
     let pool = db::connect().await;
+    auth::seed_default_admins(&pool).await;
 
     let google_cache = web::Data::new(google::GoogleImportCache::default());
 
@@ -42,6 +44,10 @@ async fn main() -> std::io::Result<()> {
             .service(auth::login)
             .service(auth::logout)
             .service(auth::me)
+            .service(admin::list_users)
+            .service(admin::set_status)
+            .service(admin::set_admin)
+            .service(admin::delete_user)
             .service(google::connect)
             .service(google::callback)
             .service(google::imported_tasks)
