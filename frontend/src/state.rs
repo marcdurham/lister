@@ -159,6 +159,10 @@ pub enum Action {
     SetOnline(bool),
     SetSyncing(bool),
     ImportGoogleTasks(Vec<crate::google::ImportedTaskList>),
+    ImportJson {
+        items: Vec<Item>,
+        memberships: Vec<Membership>,
+    },
 }
 
 impl Reducible for AppState {
@@ -376,6 +380,15 @@ impl Reducible for AppState {
                     }
                 }
                 Rc::new(next)
+            }
+            Action::ImportJson { items, memberships } => {
+                store::replace_all(items.clone(), memberships.clone());
+                Rc::new(AppState {
+                    items: items.into_iter().map(|i| (i.id, i)).collect(),
+                    memberships: memberships.into_iter().map(|m| (m.id, m)).collect(),
+                    online: self.online,
+                    syncing: self.syncing,
+                })
             }
         }
     }

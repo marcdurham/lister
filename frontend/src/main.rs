@@ -1,4 +1,5 @@
 mod auth;
+mod backup;
 mod components;
 mod google;
 mod model;
@@ -201,7 +202,7 @@ fn app() -> Html {
                         { if state.syncing { " · syncing" } else { "" } }
                     </div>
                     <span class="user-email">{ &user.email }</span>
-                    <SettingsMenu />
+                    <SettingsMenu state={state.clone()} />
                     <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
                 </div>
             </header>

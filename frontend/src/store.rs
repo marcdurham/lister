@@ -108,6 +108,31 @@ pub fn clear_all() {
     LocalStorage::delete(CURSOR_KEY);
 }
 
+/// Wipe all locally cached rows and replace them with an imported set, marking every row
+/// dirty so the next sync push mirrors the import to the server.
+pub fn replace_all(items: Vec<Item>, memberships: Vec<Membership>) {
+    clear_all();
+    let items: HashMap<Uuid, ItemRecord> = items
+        .into_iter()
+        .map(|item| (item.id, ItemRecord { item, dirty: true }))
+        .collect();
+    save_items(&items);
+
+    let memberships: HashMap<Uuid, MembershipRecord> = memberships
+        .into_iter()
+        .map(|membership| {
+            (
+                membership.id,
+                MembershipRecord {
+                    membership,
+                    dirty: true,
+                },
+            )
+        })
+        .collect();
+    save_memberships(&memberships);
+}
+
 pub fn unsynced_count() -> usize {
     load_items()
         .into_values()

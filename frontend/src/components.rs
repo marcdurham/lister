@@ -1,11 +1,14 @@
 use crate::auth;
+use crate::backup;
 use crate::google::{self, ImportedTaskList};
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
 use std::collections::HashSet;
 use uuid::Uuid;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::HtmlInputElement;
+use web_sys::{FileReader, HtmlInputElement};
 use yew::prelude::*;
 
 fn note_icon() -> Html {
@@ -612,9 +615,15 @@ pub fn trash_view(props: &TrashViewProps) -> Html {
     }
 }
 
+#[derive(Properties, PartialEq)]
+pub struct SettingsMenuProps {
+    pub state: UseReducerHandle<AppState>,
+}
+
 #[function_component(SettingsMenu)]
-pub fn settings_menu() -> Html {
+pub fn settings_menu(props: &SettingsMenuProps) -> Html {
     let open = use_state(|| false);
+    let file_input_ref = use_node_ref();
 
     let toggle = {
         let open = open.clone();
@@ -629,6 +638,82 @@ pub fn settings_menu() -> Html {
         })
     };
 
+    let export_json = {
+        let open = open.clone();
+        let state = props.state.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            let items: Vec<Item> = state.items.values().cloned().collect();
+            let memberships: Vec<Membership> = state.memberships.values().cloned().collect();
+            let json = backup::export_json(items, memberships);
+            let filename = format!("lister-export-{}.json", chrono::Utc::now().format("%Y-%m-%d"));
+            backup::download_json(&filename, &json);
+        })
+    };
+
+    let choose_import_file = {
+        let open = open.clone();
+        let file_input_ref = file_input_ref.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            if let Some(input) = file_input_ref.cast::<HtmlInputElement>() {
+                input.click();
+            }
+        })
+    };
+
+    let on_file_change = {
+        let state = props.state.clone();
+        Callback::from(move |e: Event| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            let Some(file) = input.files().and_then(|list| list.get(0)) else {
+                return;
+            };
+            input.set_value("");
+
+            let state = state.clone();
+            let Ok(reader) = FileReader::new() else {
+                return;
+            };
+            let reader_for_load = reader.clone();
+            let onload = Closure::once(move |_: Event| {
+                let Ok(result) = reader_for_load.result() else {
+                    return;
+                };
+                let Some(text) = result.as_string() else {
+                    return;
+                };
+                match backup::parse_import(&text) {
+                    Ok(data) => {
+                        let confirmed = web_sys::window()
+                            .and_then(|w| {
+                                w.confirm_with_message(
+                                    "Importing will replace all of your current tasks with the contents of this file. Continue?",
+                                )
+                                .ok()
+                            })
+                            .unwrap_or(false);
+                        if confirmed {
+                            state.dispatch(Action::ImportJson {
+                                items: data.items,
+                                memberships: data.memberships,
+                            });
+                        }
+                    }
+                    Err(_) => {
+                        if let Some(window) = web_sys::window() {
+                            let _ = window
+                                .alert_with_message("That file doesn't look like a valid Lister export.");
+                        }
+                    }
+                }
+            });
+            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+            onload.forget();
+            let _ = reader.read_as_text(&file);
+        })
+    };
+
     html! {
         <div class="settings-menu">
             <button class="settings-btn" onclick={toggle} title="Settings" aria-label="Settings">
@@ -639,8 +724,21 @@ pub fn settings_menu() -> Html {
                     <button class="settings-item" onclick={import_google}>
                         { "Import from Google Tasks" }
                     </button>
+                    <button class="settings-item" onclick={export_json}>
+                        { "Export tasks (JSON)" }
+                    </button>
+                    <button class="settings-item" onclick={choose_import_file}>
+                        { "Import tasks (JSON)" }
+                    </button>
                 </div>
             }
+            <input
+                type="file"
+                accept="application/json"
+                ref={file_input_ref}
+                onchange={on_file_change}
+                style="display: none;"
+            />
         </div>
     }
 }
