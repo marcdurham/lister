@@ -439,85 +439,34 @@ header h1 {
     resize: vertical;
 }
 
-.picker {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    padding: 0.6rem;
-    background: #f8f9fa;
-    border-radius: 6px;
-}
-
-.picker-current {
-    display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
-    font-size: 0.8rem;
-}
-
-.picker-current-label {
-    color: #9aa5b1;
-}
-
-.picker-current-text {
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.picker-search {
-    display: flex;
-    gap: 0.4rem;
-}
-
-.picker-search input {
-    flex: 1;
-    min-width: 0;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid #cbd2d9;
-    border-radius: 4px;
-    font-size: 0.8rem;
-}
-
-.show-all-btn {
+.list-manager-current {
     display: flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.75rem;
+    background: #f8f9fa;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+.list-manager-search {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
     border: 1px solid #cbd2d9;
-    background: white;
-    color: #616e7c;
     border-radius: 4px;
-    padding: 0.3rem;
-    cursor: pointer;
+    font-size: 1rem;
 }
 
-.show-all-btn.active {
-    background: #1f6feb;
-    border-color: #1f6feb;
-    color: white;
+.list-manager-list .item.subtle {
+    opacity: 0.7;
 }
 
-.picker-results {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-}
-
-.picker-results button {
-    border: 1px solid #cbd2d9;
-    background: white;
-    border-radius: 4px;
-    padding: 0.2rem 0.5rem;
-    font-size: 0.75rem;
-    cursor: pointer;
-}
-
-.picker .hint {
-    font-size: 0.75rem;
-    color: #9aa5b1;
+.list-manager-actions {
+    margin-top: 1rem;
 }
 
 .empty {
@@ -828,19 +777,13 @@ header h1 {
         color: #f5f6f8;
         border-color: #52606d;
     }
-    .picker {
+    .list-manager-current {
         background: #2c3947;
     }
-    .picker-results button,
-    .picker-search input,
-    .show-all-btn {
+    .list-manager-search {
         background: #3e4c59;
         border-color: #52606d;
         color: #f5f6f8;
-    }
-    .show-all-btn.active {
-        background: #1f6feb;
-        border-color: #1f6feb;
     }
     .status {
         background: #3e4c59;

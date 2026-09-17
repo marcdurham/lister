@@ -101,11 +101,17 @@ impl AppState {
         result
     }
 
-    pub fn top_level_lists(&self) -> Vec<Item> {
-        self.children(None, false)
-            .into_iter()
-            .map(|(item, _)| item)
-            .collect()
+    /// All descendants of `item_id` (regardless of whether they're shared with another
+    /// list) - used to keep the list manager from letting an item become its own ancestor.
+    pub fn descendant_ids(&self, item_id: Uuid) -> std::collections::HashSet<Uuid> {
+        let mut result = std::collections::HashSet::new();
+        let mut stack = self.direct_children_ids(item_id);
+        while let Some(id) = stack.pop() {
+            if result.insert(id) {
+                stack.extend(self.direct_children_ids(id));
+            }
+        }
+        result
     }
 
     /// Items currently in the trash, most-recently-removed first.
@@ -134,6 +140,7 @@ pub enum Action {
         notes: String,
     },
     ToggleVisible(Uuid),
+    RemoveMembership(Uuid),
     /// Move `membership_id` so it sits immediately before `before_id` in the same list.
     MoveBefore {
         membership_id: Uuid,
@@ -220,6 +227,16 @@ impl Reducible for AppState {
                 if let Some(m) = next.memberships.get_mut(&membership_id) {
                     m.visible = !m.visible;
                     m.updated_at = Utc::now();
+                    store::put_membership(m.clone());
+                }
+                Rc::new(next)
+            }
+            Action::RemoveMembership(membership_id) => {
+                let mut next = (*self).clone();
+                if let Some(m) = next.memberships.get_mut(&membership_id) {
+                    let now = Utc::now();
+                    m.deleted_at = Some(now);
+                    m.updated_at = now;
                     store::put_membership(m.clone());
                 }
                 Rc::new(next)

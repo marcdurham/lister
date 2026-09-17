@@ -17,3 +17,12 @@
 
 ## 2026-09-17 10:20 PDT
 - New items are now added to the top of a list instead of the bottom.
+
+## 2026-09-17 10:45 PDT
+- Replaced the item editor's "Add to list" button with a "Lists" button that opens a new
+  full-screen list manager: the item being edited is shown compactly at the top, a search
+  box below it, and below that the normal item hierarchy (browsable exactly like the main
+  view, with breadcrumbs) with a checkbox on every row to mark the edited item as a member
+  of that list. Save applies all the additions/removals at once; Cancel/Back discards them.
+  Prevents an item from being nested under itself or one of its own descendants.
+- Added `Action::RemoveMembership` and `AppState::descendant_ids` to support the manager.

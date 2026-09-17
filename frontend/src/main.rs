@@ -10,7 +10,7 @@ mod sync;
 
 use components::{
     AdminPage, AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow,
-    SettingsMenu, TrashView,
+    ListManager, SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -36,6 +36,7 @@ fn app() -> Html {
     let editing = use_state(|| None::<(Uuid, Uuid)>);
     let show_trash = use_state(|| false);
     let show_admin = use_state(|| false);
+    let managing_lists = use_state(|| None::<Uuid>);
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
 
@@ -152,6 +153,19 @@ fn app() -> Html {
         Callback::from(move |_: ()| editing.set(None))
     };
 
+    let on_manage_lists = {
+        let editing = editing.clone();
+        let managing_lists = managing_lists.clone();
+        Callback::from(move |item_id: Uuid| {
+            editing.set(None);
+            managing_lists.set(Some(item_id));
+        })
+    };
+    let close_list_manager = {
+        let managing_lists = managing_lists.clone();
+        Callback::from(move |_: ()| managing_lists.set(None))
+    };
+
     let toggle_trash = {
         let show_trash = show_trash.clone();
         Callback::from(move |_: MouseEvent| show_trash.set(!*show_trash))
@@ -219,7 +233,9 @@ fn app() -> Html {
             if let Some(lists) = (*google_import).clone() {
                 <GoogleImportDialog state={state.clone()} lists={lists} on_close={close_google_import} />
             }
-            if *show_admin {
+            if let Some(item_id) = *managing_lists {
+                <ListManager state={state.clone()} item_id={item_id} on_close={close_list_manager} />
+            } else if *show_admin {
                 <AdminPage current_user_id={user.id.clone()} on_close={close_admin} />
             } else if *show_trash {
                 <TrashView state={state.clone()} on_close={close_trash} />
@@ -251,7 +267,13 @@ fn app() -> Html {
                 }
             }
             if let Some((item_id, membership_id)) = *editing {
-                <ItemEditor state={state.clone()} item_id={item_id} membership_id={membership_id} on_close={close_editor} />
+                <ItemEditor
+                    state={state.clone()}
+                    item_id={item_id}
+                    membership_id={membership_id}
+                    on_close={close_editor}
+                    on_manage_lists={on_manage_lists}
+                />
             }
         </div>
     }

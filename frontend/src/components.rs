@@ -61,18 +61,6 @@ fn edit_icon() -> Html {
     }
 }
 
-/// Compact "browse all" icon for switching the add-to-list picker from search to navigation.
-fn show_all_icon() -> Html {
-    html! {
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
-            <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        </svg>
-    }
-}
-
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
 }
@@ -473,112 +461,12 @@ pub fn item_row(props: &ItemRowProps) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
-pub struct AddToListPickerProps {
-    pub state: UseReducerHandle<AppState>,
-    pub item_id: Uuid,
-    pub current_parent: Option<Uuid>,
-}
-
-#[function_component(AddToListPicker)]
-pub fn add_to_list_picker(props: &AddToListPickerProps) -> Html {
-    let query = use_state(String::new);
-    let show_all = use_state(|| false);
-
-    let item_id = props.item_id;
-    let state = props.state.clone();
-    let Some(item) = state.items.get(&item_id).cloned() else {
-        return html! {};
-    };
-
-    let on_query_input = {
-        let query = query.clone();
-        let show_all = show_all.clone();
-        Callback::from(move |e: InputEvent| {
-            let input: HtmlInputElement = e.target_unchecked_into();
-            show_all.set(false);
-            query.set(input.value());
-        })
-    };
-
-    let toggle_show_all = {
-        let show_all = show_all.clone();
-        let query = query.clone();
-        Callback::from(move |_: MouseEvent| {
-            query.set(String::new());
-            show_all.set(!*show_all);
-        })
-    };
-
-    let query_lower = query.trim().to_lowercase();
-    let candidates: Vec<Item> = if *show_all {
-        state.top_level_lists()
-    } else if query_lower.is_empty() {
-        Vec::new()
-    } else {
-        let mut matches: Vec<Item> = state
-            .items
-            .values()
-            .filter(|i| i.deleted_at.is_none())
-            .filter(|i| i.id != item_id)
-            .filter(|i| i.text.to_lowercase().contains(&query_lower))
-            .cloned()
-            .collect();
-        matches.sort_by(|a, b| a.text.to_lowercase().cmp(&b.text.to_lowercase()));
-        matches.truncate(20);
-        matches
-    };
-
-    html! {
-        <div class="picker">
-            <div class="picker-current">
-                <span class="picker-current-label">{ "Add to list:" }</span>
-                <span class="picker-current-text">{ &item.text }</span>
-            </div>
-            <div class="picker-search">
-                <input
-                    type="text"
-                    placeholder="Search for a list..."
-                    value={(*query).clone()}
-                    oninput={on_query_input}
-                />
-                <button
-                    class={classes!("show-all-btn", (*show_all).then_some("active"))}
-                    onclick={toggle_show_all}
-                    title="Browse all lists"
-                    aria-label="Browse all lists"
-                >
-                    { show_all_icon() }
-                </button>
-            </div>
-            <div class="picker-results">
-                { for candidates.iter().filter(|l| Some(l.id) != props.current_parent).map(|list| {
-                    let state = state.clone();
-                    let parent = list.id;
-                    let onclick = Callback::from(move |_: MouseEvent| {
-                        state.dispatch(Action::AddToList { item_id, parent: Some(parent) });
-                    });
-                    html! { <button {onclick}>{ &list.text }</button> }
-                }) }
-                if candidates.is_empty() {
-                    if *show_all {
-                        <span class="hint">{ "No other lists yet." }</span>
-                    } else if query_lower.is_empty() {
-                        <span class="hint">{ "Type to search, or tap the icon to browse all lists." }</span>
-                    } else {
-                        <span class="hint">{ "No matches." }</span>
-                    }
-                }
-            </div>
-        </div>
-    }
-}
-
-#[derive(Properties, PartialEq)]
 pub struct ItemEditorProps {
     pub state: UseReducerHandle<AppState>,
     pub item_id: Uuid,
     pub membership_id: Uuid,
     pub on_close: Callback<()>,
+    pub on_manage_lists: Callback<Uuid>,
 }
 
 #[function_component(ItemEditor)]
@@ -593,7 +481,6 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     let notes = use_state(|| item.notes.clone().unwrap_or_default());
     // Once true, the notes field stays large for the rest of this editing session.
     let large_notes = use_state(|| item.is_note || item.notes.is_some());
-    let picker_open = use_state(|| false);
     let confirm_remove = use_state(|| false);
     let remove_children = use_state(|| true);
 
@@ -666,7 +553,6 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     };
 
     let membership_visible = membership.as_ref().map(|m| m.visible).unwrap_or(true);
-    let current_parent = membership.as_ref().and_then(|m| m.parent_id);
 
     let toggle_visible = membership.as_ref().map(|m| {
         let state = state.clone();
@@ -674,9 +560,10 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleVisible(membership_id)))
     });
 
-    let toggle_picker = {
-        let picker_open = picker_open.clone();
-        Callback::from(move |_: MouseEvent| picker_open.set(!*picker_open))
+    let manage_lists = {
+        let on_manage_lists = props.on_manage_lists.clone();
+        let id = item.id;
+        Callback::from(move |_: MouseEvent| on_manage_lists.emit(id))
     };
 
     let open_confirm_remove = {
@@ -749,12 +636,9 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             { if membership_visible { "Hide" } else { "Show" } }
                         </button>
                     }
-                    <button onclick={toggle_picker}>{ "Add to list" }</button>
+                    <button onclick={manage_lists}>{ "Lists" }</button>
                     <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
                 </div>
-                if *picker_open {
-                    <AddToListPicker state={state.clone()} item_id={item.id} current_parent={current_parent} />
-                }
                 if *confirm_remove {
                     <div class="confirm-remove">
                         <p>
@@ -783,6 +667,206 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                     <button onclick={save}>{ "Save" }</button>
                     <button onclick={close}>{ "Cancel" }</button>
                 </div>
+            </div>
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct ListManagerProps {
+    pub state: UseReducerHandle<AppState>,
+    pub item_id: Uuid,
+    pub on_close: Callback<()>,
+}
+
+/// Full-screen manager for which lists an item belongs to. Lets the item have several
+/// parents at once (or none) by browsing the same hierarchy as the main view, or by
+/// searching, and checking/unchecking candidate parents before saving.
+#[function_component(ListManager)]
+pub fn list_manager(props: &ListManagerProps) -> Html {
+    let state = props.state.clone();
+    let item_id = props.item_id;
+    let Some(item) = state.items.get(&item_id).cloned() else {
+        return html! {};
+    };
+
+    let path = use_state(Vec::<Uuid>::new);
+    let query = use_state(String::new);
+    let pending = use_state(|| {
+        state
+            .memberships
+            .values()
+            .filter(|m| m.item_id == item_id && m.deleted_at.is_none())
+            .filter_map(|m| m.parent_id)
+            .collect::<HashSet<Uuid>>()
+    });
+
+    // Never allow the item to become its own ancestor.
+    let mut excluded = state.descendant_ids(item_id);
+    excluded.insert(item_id);
+
+    let on_query_input = {
+        let query = query.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            query.set(input.value());
+        })
+    };
+
+    let on_navigate = {
+        let path = path.clone();
+        Callback::from(move |new_path: Vec<Uuid>| path.set(new_path))
+    };
+
+    let cancel = {
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| on_close.emit(()))
+    };
+
+    let save = {
+        let state = state.clone();
+        let pending = pending.clone();
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| {
+            let original: HashSet<Uuid> = state
+                .memberships
+                .values()
+                .filter(|m| m.item_id == item_id && m.deleted_at.is_none())
+                .filter_map(|m| m.parent_id)
+                .collect();
+            for parent in pending.iter() {
+                if !original.contains(parent) {
+                    state.dispatch(Action::AddToList {
+                        item_id,
+                        parent: Some(*parent),
+                    });
+                }
+            }
+            for parent in original.iter() {
+                if !pending.contains(parent) {
+                    let existing = state.memberships.values().find(|m| {
+                        m.item_id == item_id
+                            && m.parent_id == Some(*parent)
+                            && m.deleted_at.is_none()
+                    });
+                    if let Some(m) = existing {
+                        state.dispatch(Action::RemoveMembership(m.id));
+                    }
+                }
+            }
+            on_close.emit(());
+        })
+    };
+
+    let query_lower = query.trim().to_lowercase();
+    let current_parent = path.last().copied();
+
+    let rows: Vec<Item> = if query_lower.is_empty() {
+        state
+            .children(current_parent, true)
+            .into_iter()
+            .map(|(row_item, _)| row_item)
+            .filter(|i| !excluded.contains(&i.id))
+            .collect()
+    } else {
+        let mut matches: Vec<Item> = state
+            .items
+            .values()
+            .filter(|i| i.deleted_at.is_none())
+            .filter(|i| !excluded.contains(&i.id))
+            .filter(|i| i.text.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+        matches.sort_by(|a, b| a.text.to_lowercase().cmp(&b.text.to_lowercase()));
+        matches.truncate(50);
+        matches
+    };
+
+    html! {
+        <div class="trash-view list-manager">
+            <div class="trash-header">
+                <h2>{ "Manage lists" }</h2>
+                <button onclick={cancel.clone()}>{ "Back" }</button>
+            </div>
+            <div class="list-manager-current">
+                if item.is_note { { note_icon() } } else if item.is_list || state.direct_child_count(item_id) > 0 {
+                    { list_icon() }
+                } else {
+                    <input type="checkbox" checked={item.done} disabled=true />
+                }
+                <span class="item-text">{ &item.text }</span>
+            </div>
+            <input
+                type="text"
+                class="list-manager-search"
+                placeholder="Search for a list..."
+                value={(*query).clone()}
+                oninput={on_query_input}
+            />
+            if query_lower.is_empty() {
+                <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />
+            }
+            <ul class="items list-manager-list">
+                { for rows.iter().map(|row_item| {
+                    let row_id = row_item.id;
+                    let checked = pending.contains(&row_id);
+                    let child_count = state.direct_child_count(row_id);
+                    let has_children = child_count > 0;
+
+                    let toggle = {
+                        let pending = pending.clone();
+                        Callback::from(move |e: MouseEvent| {
+                            e.stop_propagation();
+                            let mut next = (*pending).clone();
+                            if next.contains(&row_id) {
+                                next.remove(&row_id);
+                            } else {
+                                next.insert(row_id);
+                            }
+                            pending.set(next);
+                        })
+                    };
+
+                    let open = {
+                        let path = path.clone();
+                        let query = query.clone();
+                        Callback::from(move |_: MouseEvent| {
+                            if !has_children {
+                                return;
+                            }
+                            let mut next = (*path).clone();
+                            next.push(row_id);
+                            path.set(next);
+                            query.set(String::new());
+                        })
+                    };
+
+                    html! {
+                        <li class={classes!("item", (!has_children).then_some("subtle"))} key={row_id.to_string()}>
+                            <div class="item-main" onclick={open}>
+                                <input type="checkbox" checked={checked} onclick={toggle} />
+                                if row_item.is_note {
+                                    { note_icon() }
+                                } else if row_item.is_list || has_children {
+                                    { list_icon() }
+                                }
+                                <span class="item-text">{ &row_item.text }</span>
+                                if child_count > 0 {
+                                    <span class="child-count">{ child_count }</span>
+                                }
+                            </div>
+                        </li>
+                    }
+                }) }
+            </ul>
+            if rows.is_empty() {
+                <p class="empty">
+                    { if query_lower.is_empty() { "Nothing here." } else { "No matches." } }
+                </p>
+            }
+            <div class="editor-actions list-manager-actions">
+                <button onclick={save}>{ "Save" }</button>
+                <button onclick={cancel}>{ "Cancel" }</button>
             </div>
         </div>
     }
