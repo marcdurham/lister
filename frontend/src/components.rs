@@ -68,6 +68,9 @@ fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
 #[derive(Properties, PartialEq)]
 pub struct AuthScreenProps {
     pub on_authed: Callback<auth::User>,
+    /// Present when the app is already usable offline as a guest, so the screen is a
+    /// dismissible panel rather than the only thing on screen.
+    pub on_close: Option<Callback<()>>,
 }
 
 #[function_component(AuthScreen)]
@@ -148,9 +151,19 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
         })
     };
 
+    let close = props.on_close.clone().map(|on_close| {
+        Callback::from(move |e: MouseEvent| {
+            e.prevent_default();
+            on_close.emit(());
+        })
+    });
+
     html! {
         <div class="auth-screen">
             <form class="auth-card">
+                if let Some(close) = close {
+                    <button class="auth-back" type="button" onclick={close}>{ "Back" }</button>
+                }
                 <h1>{ "Lister" }</h1>
                 <h2>{ if *mode_register { "Create account" } else { "Sign in" } }</h2>
                 <label class="editor-field">

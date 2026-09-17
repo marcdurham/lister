@@ -34,3 +34,11 @@
   top of its items that navigates up when clicked. Verified both in a local browser
   session (multi-level navigate-in, then browser Back and the ".." row each correctly
   step back up one level).
+
+## 2026-09-17 11:10 PDT
+- The app no longer requires logging in to use it: it now loads straight into the
+  local/offline list view for everyone. A "Log in" button in the header opens the
+  existing sign-in/register form as a dismissible panel ("Back" to return to the
+  list); logging in swaps in the account's data and starts syncing to the server
+  as before. The backend's `/api/sync` already rejected unauthenticated requests,
+  so guests simply keep working offline until they choose to log in.

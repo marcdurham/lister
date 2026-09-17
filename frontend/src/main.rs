@@ -53,6 +53,7 @@ fn app() -> Html {
     let show_trash = use_state(|| false);
     let show_admin = use_state(|| false);
     let managing_lists = use_state(|| None::<Uuid>);
+    let show_login = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
 
@@ -88,16 +89,27 @@ fn app() -> Html {
     let on_authed = {
         let session = session.clone();
         let state = state.clone();
+        let show_login = show_login.clone();
         Callback::from(move |user: auth::User| {
             store::clear_all();
             state.dispatch(Action::Reload);
             session.set(SessionState::LoggedIn(user));
+            show_login.set(false);
             let state = state.clone();
             spawn_local(async move {
                 sync::sync_once().await;
                 state.dispatch(Action::Reload);
             });
         })
+    };
+
+    let open_login = {
+        let show_login = show_login.clone();
+        Callback::from(move |_: MouseEvent| show_login.set(true))
+    };
+    let close_login = {
+        let show_login = show_login.clone();
+        Callback::from(move |_: ()| show_login.set(false))
     };
 
     let logout = {
@@ -251,14 +263,12 @@ fn app() -> Html {
     let current_parent = path.last().copied();
     let rows = state.children(current_parent, *show_hidden);
 
+    if *session == SessionState::Loading {
+        return html! { <div class="app auth-screen"><p>{ "Loading..." }</p></div> };
+    }
     let user = match &*session {
-        SessionState::LoggedIn(user) => user.clone(),
-        SessionState::Loading => {
-            return html! { <div class="app auth-screen"><p>{ "Loading..." }</p></div> };
-        }
-        SessionState::LoggedOut => {
-            return html! { <AuthScreen on_authed={on_authed} /> };
-        }
+        SessionState::LoggedIn(user) => Some(user.clone()),
+        _ => None,
     };
 
     html! {
@@ -281,18 +291,24 @@ fn app() -> Html {
                         }}
                         { if state.syncing { " · syncing" } else { "" } }
                     </div>
-                    <span class="user-email">{ &user.email }</span>
-                    <SettingsMenu state={state.clone()} is_admin={user.is_admin} on_open_admin={open_admin} />
-                    <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
+                    if let Some(user) = &user {
+                        <span class="user-email">{ &user.email }</span>
+                        <SettingsMenu state={state.clone()} is_admin={user.is_admin} on_open_admin={open_admin} />
+                        <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
+                    } else {
+                        <button class="login-btn" onclick={open_login}>{ "Log in" }</button>
+                    }
                 </div>
             </header>
             if let Some(lists) = (*google_import).clone() {
                 <GoogleImportDialog state={state.clone()} lists={lists} on_close={close_google_import} />
             }
-            if let Some(item_id) = *managing_lists {
+            if *show_login {
+                <AuthScreen on_authed={on_authed} on_close={Some(close_login)} />
+            } else if let Some(item_id) = *managing_lists {
                 <ListManager state={state.clone()} item_id={item_id} on_close={close_list_manager} />
-            } else if *show_admin {
-                <AdminPage current_user_id={user.id.clone()} on_close={close_admin} />
+            } else if *show_admin && user.is_some() {
+                <AdminPage current_user_id={user.as_ref().unwrap().id.clone()} on_close={close_admin} />
             } else if *show_trash {
                 <TrashView state={state.clone()} on_close={close_trash} />
             } else {
