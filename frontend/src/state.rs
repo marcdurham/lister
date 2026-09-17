@@ -136,7 +136,9 @@ impl AppState {
         for (item, _) in self.children(parent, true) {
             out.push_str(&"  ".repeat(depth));
             out.push_str("- ");
-            let is_task = !item.is_note && !item.is_list;
+            // Mirrors the row's own list detection: an item with children renders (and
+            // exports) as a list even if `is_list` was never explicitly set on it.
+            let is_task = !item.is_note && !item.is_list && self.direct_child_count(item.id) == 0;
             if is_task {
                 out.push_str(if item.done { "DONE: " } else { "TODO: " });
             }
@@ -594,5 +596,94 @@ mod tests {
             state.copy_as_markdown(None),
             "- TODO: Buy milk\n- DONE: Pay rent\n- Just a note\n- A sublist\n"
         );
+    }
+
+    /// A parent with children is exported as a list (no TODO:/DONE: prefix) even if
+    /// `is_list` was never explicitly set on it - matching how a row with children
+    /// always renders as a list regardless of that flag.
+    #[test]
+    fn copy_as_markdown_treats_items_with_children_as_lists() {
+        let parent = item("Errands", false, false, false);
+        let parent_id = parent.id;
+        let child = item("Buy milk", false, false, false);
+        let mut items = HashMap::new();
+        let mut memberships = HashMap::new();
+        memberships.insert(
+            Uuid::new_v4(),
+            Membership::new(parent.id, None, 1.0),
+        );
+        memberships.insert(
+            Uuid::new_v4(),
+            Membership::new(child.id, Some(parent_id), 1.0),
+        );
+        items.insert(parent.id, parent);
+        items.insert(child.id, child);
+        let state = AppState {
+            items,
+            memberships,
+            online: true,
+            syncing: false,
+        };
+        assert_eq!(
+            state.copy_as_markdown(None),
+            "- Errands\n  - TODO: Buy milk\n"
+        );
+    }
+
+    /// The markdown import parser must accept the exact format `copy_as_markdown`
+    /// produces - explicit `TODO:`/`DONE:` prefixes, nested with two-space indents -
+    /// and reconstruct the same task/done states and parent/child structure.
+    #[test]
+    fn markdown_import_round_trips_the_copy_format() {
+        let list = item("Errands", false, true, false);
+        let list_id = list.id;
+        let todo = item("Buy milk", false, false, false);
+        let done = item("Pay rent", false, false, true);
+        let top_task = item("Walk the dog", false, false, true);
+
+        let mut items = HashMap::new();
+        let mut memberships = HashMap::new();
+        memberships.insert(Uuid::new_v4(), Membership::new(list.id, None, 1.0));
+        memberships.insert(Uuid::new_v4(), Membership::new(todo.id, Some(list_id), 1.0));
+        memberships.insert(Uuid::new_v4(), Membership::new(done.id, Some(list_id), 2.0));
+        memberships.insert(Uuid::new_v4(), Membership::new(top_task.id, None, 2.0));
+        items.insert(list.id, list);
+        items.insert(todo.id, todo);
+        items.insert(done.id, done);
+        items.insert(top_task.id, top_task);
+        let state = AppState {
+            items,
+            memberships,
+            online: true,
+            syncing: false,
+        };
+
+        let markdown = state.copy_as_markdown(None);
+        assert_eq!(
+            markdown,
+            "- Errands\n  - TODO: Buy milk\n  - DONE: Pay rent\n- DONE: Walk the dog\n"
+        );
+
+        let import = crate::markdown::parse_markdown(&markdown);
+        let find = |text: &str| import.items.iter().find(|i| i.text == text).unwrap();
+        let parent_of = |item_id: Uuid| {
+            import
+                .memberships
+                .iter()
+                .find(|m| m.item_id == item_id)
+                .and_then(|m| m.parent_id)
+        };
+
+        let errands = find("Errands");
+        let milk = find("Buy milk");
+        let rent = find("Pay rent");
+        let dog = find("Walk the dog");
+
+        assert!(!milk.done);
+        assert!(rent.done);
+        assert!(dog.done);
+        assert_eq!(parent_of(milk.id), Some(errands.id));
+        assert_eq!(parent_of(rent.id), Some(errands.id));
+        assert_eq!(parent_of(dog.id), None);
     }
 }
