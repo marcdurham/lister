@@ -22,6 +22,7 @@ async fn spa_fallback() -> actix_web::Result<NamedFile> {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenvy::dotenv().ok();
+    env_logger::init();
 
     let bind_addr = std::env::var("LISTER_BIND").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
     println!("Lister backend listening on http://{bind_addr}");

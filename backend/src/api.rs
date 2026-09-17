@@ -1,4 +1,5 @@
 use actix_web::{post, web, HttpRequest, HttpResponse, Responder};
+use log;
 use chrono::{DateTime, Utc};
 use shared::{Item, Membership, SyncRequest, SyncResponse};
 use sqlx::PgPool;
@@ -95,12 +96,15 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
             return HttpResponse::InternalServerError().body(format!("sync item failed: {err}"));
         }
     }
+    log::info!("synced {} items", body.items.len());
+
     for membership in &body.memberships {
         if let Err(err) = upsert_membership(&pool, membership, owner_id).await {
             return HttpResponse::InternalServerError()
                 .body(format!("sync membership failed: {err}"));
         }
     }
+    log::info!("synced {} memberships", body.memberships.len());
 
     let items = match sqlx::query_as!(
         Item,
@@ -133,6 +137,8 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
             return HttpResponse::InternalServerError().body(format!("pull memberships failed: {err}"))
         }
     };
+
+    log::info!("sync response: {} items, {} memberships", items.len(), memberships.len());
 
     HttpResponse::Ok().json(SyncResponse {
         items,
