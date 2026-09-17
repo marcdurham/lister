@@ -857,6 +857,7 @@ pub struct AdminPageProps {
 pub fn admin_page(props: &AdminPageProps) -> Html {
     let users = use_state(|| None::<Vec<admin::AdminUser>>);
     let error = use_state(|| None::<String>);
+    let status = use_state(|| None::<String>);
 
     {
         let users = users.clone();
@@ -883,6 +884,9 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
             if let Some(msg) = &*error {
                 <p class="auth-error">{ msg }</p>
             }
+            if let Some(msg) = &*status {
+                <p class="auth-info">{ msg }</p>
+            }
             {
                 match &*users {
                     None => html! { <p class="empty">{ "Loading..." }</p> },
@@ -894,15 +898,21 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
 
                                 let approve = {
                                     let id = u.id;
+                                    let email = u.email.clone();
                                     let users = users.clone();
                                     let error = error.clone();
+                                    let status = status.clone();
                                     Callback::from(move |_: MouseEvent| {
                                         let users = users.clone();
                                         let error = error.clone();
+                                        let status = status.clone();
+                                        let email = email.clone();
                                         spawn_local(async move {
+                                            error.set(None);
                                             if let Err(msg) = admin::set_status(id, "approved").await {
                                                 error.set(Some(msg));
                                             } else {
+                                                status.set(Some(format!("Approved {email}.")));
                                                 refresh_admin_users(users, error).await;
                                             }
                                         });
@@ -911,15 +921,21 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
 
                                 let disable = {
                                     let id = u.id;
+                                    let email = u.email.clone();
                                     let users = users.clone();
                                     let error = error.clone();
+                                    let status = status.clone();
                                     Callback::from(move |_: MouseEvent| {
                                         let users = users.clone();
                                         let error = error.clone();
+                                        let status = status.clone();
+                                        let email = email.clone();
                                         spawn_local(async move {
+                                            error.set(None);
                                             if let Err(msg) = admin::set_status(id, "disabled").await {
                                                 error.set(Some(msg));
                                             } else {
+                                                status.set(Some(format!("Disabled {email}.")));
                                                 refresh_admin_users(users, error).await;
                                             }
                                         });
@@ -928,15 +944,21 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
 
                                 let enable = {
                                     let id = u.id;
+                                    let email = u.email.clone();
                                     let users = users.clone();
                                     let error = error.clone();
+                                    let status = status.clone();
                                     Callback::from(move |_: MouseEvent| {
                                         let users = users.clone();
                                         let error = error.clone();
+                                        let status = status.clone();
+                                        let email = email.clone();
                                         spawn_local(async move {
+                                            error.set(None);
                                             if let Err(msg) = admin::set_status(id, "approved").await {
                                                 error.set(Some(msg));
                                             } else {
+                                                status.set(Some(format!("Re-enabled {email}.")));
                                                 refresh_admin_users(users, error).await;
                                             }
                                         });
@@ -945,16 +967,26 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
 
                                 let toggle_admin = {
                                     let id = u.id;
+                                    let email = u.email.clone();
                                     let make_admin = !u.is_admin;
                                     let users = users.clone();
                                     let error = error.clone();
+                                    let status = status.clone();
                                     Callback::from(move |_: MouseEvent| {
                                         let users = users.clone();
                                         let error = error.clone();
+                                        let status = status.clone();
+                                        let email = email.clone();
                                         spawn_local(async move {
+                                            error.set(None);
                                             if let Err(msg) = admin::set_admin(id, make_admin).await {
                                                 error.set(Some(msg));
                                             } else {
+                                                status.set(Some(if make_admin {
+                                                    format!("{email} is now an admin.")
+                                                } else {
+                                                    format!("{email} is no longer an admin.")
+                                                }));
                                                 refresh_admin_users(users, error).await;
                                             }
                                         });
@@ -966,6 +998,7 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
                                     let email = u.email.clone();
                                     let users = users.clone();
                                     let error = error.clone();
+                                    let status = status.clone();
                                     Callback::from(move |_: MouseEvent| {
                                         let confirmed = web_sys::window()
                                             .and_then(|w| {
@@ -980,10 +1013,14 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
                                         }
                                         let users = users.clone();
                                         let error = error.clone();
+                                        let status = status.clone();
+                                        let email = email.clone();
                                         spawn_local(async move {
+                                            error.set(None);
                                             if let Err(msg) = admin::delete_user(id).await {
                                                 error.set(Some(msg));
                                             } else {
+                                                status.set(Some(format!("Deleted {email}.")));
                                                 refresh_admin_users(users, error).await;
                                             }
                                         });
