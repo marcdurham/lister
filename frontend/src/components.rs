@@ -4,12 +4,15 @@ use crate::backup;
 use crate::google::{self, ImportedTaskList};
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
+use gloo_timers::callback::Timeout;
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{DragEvent, FileReader, HtmlInputElement};
+use web_sys::{FileReader, HtmlInputElement, PointerEvent};
 use yew::prelude::*;
 
 fn note_icon() -> Html {
@@ -502,6 +505,54 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
     }
 }
 
+/// What's currently under the pointer while dragging an item: either another row (to
+/// reorder before), or that row's chevron (to nest inside it).
+#[derive(Clone, Copy, PartialEq)]
+pub enum DragHoverTarget {
+    Reorder(Uuid),
+    Nest(Uuid),
+}
+
+/// Minimum on-screen movement (px) before a mouse press turns into a drag.
+const MOUSE_DRAG_THRESHOLD: f64 = 6.0;
+/// How long a touch/pen must be held still before it arms into a drag.
+const TOUCH_HOLD_MS: u32 = 280;
+/// Movement (px) during the hold window that means "this is a scroll, not a hold".
+const TOUCH_CANCEL_THRESHOLD: f64 = 10.0;
+
+#[derive(Clone)]
+struct DragTracker {
+    pointer_id: i32,
+    start_x: f64,
+    start_y: f64,
+    /// Y of the last pointermove seen, used to compute a manual scroll delta.
+    last_y: f64,
+    is_touch: bool,
+    /// The hold elapsed and this is now a real drag.
+    active: bool,
+    /// The touch moved before the hold elapsed, so we're manually scrolling the page
+    /// instead (native touch scrolling is disabled on the row so the hold can be timed).
+    scrolling: bool,
+}
+
+/// Find whatever row (or nest chevron) is visually under the given viewport point.
+fn hover_target_at(x: f64, y: f64, dragged_membership_id: Uuid) -> Option<DragHoverTarget> {
+    let doc = web_sys::window()?.document()?;
+    let el = doc.element_from_point(x as f32, y as f32)?;
+    if let Ok(Some(nest)) = el.closest(".nest-target") {
+        let item_id = nest.get_attribute("data-drop-item")?;
+        return Uuid::parse_str(&item_id).ok().map(DragHoverTarget::Nest);
+    }
+    if let Ok(Some(row)) = el.closest("[data-membership-id]") {
+        let membership_id = row.get_attribute("data-membership-id")?;
+        let membership_id = Uuid::parse_str(&membership_id).ok()?;
+        if membership_id != dragged_membership_id {
+            return Some(DragHoverTarget::Reorder(membership_id));
+        }
+    }
+    None
+}
+
 #[derive(Properties, PartialEq)]
 pub struct ItemRowProps {
     pub state: UseReducerHandle<AppState>,
@@ -512,16 +563,22 @@ pub struct ItemRowProps {
     /// Membership id of the item currently being dragged, shared across all rows so each
     /// one can switch its far-right control to a "drop to nest" chevron.
     pub dragging: Option<Uuid>,
+    /// Current drop target, shared across all rows so the hovered one can highlight.
+    pub hover_membership: Option<Uuid>,
+    pub hover_nest_item: Option<Uuid>,
     pub on_drag_start: Callback<Uuid>,
+    pub on_drag_hover: Callback<Option<DragHoverTarget>>,
     pub on_drag_end: Callback<()>,
-    /// (dragged membership id, target item id) - dropped onto another row's chevron.
-    pub on_move_into: Callback<(Uuid, Uuid)>,
 }
 
 #[function_component(ItemRow)]
 pub fn item_row(props: &ItemRowProps) -> Html {
-    let drag_over = use_state(|| false);
-    let chevron_drag_over = use_state(|| false);
+    // A plain `use_state` handle snapshots its value per-render, so a `Timeout` closure
+    // created in one render (as the touch hold-to-arm timer is) would only ever see the
+    // value from that render, never a later update - `use_mut_ref` gives real shared
+    // mutable state instead, which every closure (however long-lived) reads live.
+    let tracker: Rc<RefCell<Option<DragTracker>>> = use_mut_ref(|| None);
+    let hold_timer: Rc<RefCell<Option<Timeout>>> = use_mut_ref(|| None);
 
     let item = &props.item;
     let membership = &props.membership;
@@ -566,99 +623,181 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    // Drag-to-reorder: any part of the row (other than the checkbox/buttons) starts the
-    // drag, and dropping onto another row moves the dragged item to sit right before it.
-    let on_drag_start = {
-        let id = membership.id;
+    // Drag-to-reorder/nest: press anywhere on the row (other than the checkbox/buttons)
+    // and hold. A mouse starts dragging as soon as it moves past a small threshold. A
+    // touch/pen needs a brief hold first - native touch scrolling is disabled on the row
+    // (see `.item-main { touch-action: none }`) so we can time that hold, and if the
+    // finger moves before it elapses we scroll the page manually instead, so scrolling a
+    // list that starts on an item still works.
+    let on_pointer_down = {
+        let tracker = tracker.clone();
+        let hold_timer = hold_timer.clone();
         let on_drag_start = props.on_drag_start.clone();
-        Callback::from(move |e: DragEvent| {
-            if let Some(dt) = e.data_transfer() {
-                let _ = dt.set_data("text/plain", &id.to_string());
-                dt.set_effect_allowed("move");
-            }
-            on_drag_start.emit(id);
-        })
-    };
-
-    let on_drag_end = {
-        let on_drag_end = props.on_drag_end.clone();
-        Callback::from(move |_: DragEvent| on_drag_end.emit(()))
-    };
-
-    let no_drag_start = Callback::from(|e: DragEvent| {
-        e.prevent_default();
-        e.stop_propagation();
-    });
-
-    let on_drag_over = {
-        let drag_over = drag_over.clone();
-        Callback::from(move |e: DragEvent| {
-            e.prevent_default();
-            drag_over.set(true);
-        })
-    };
-
-    let on_drag_leave = {
-        let drag_over = drag_over.clone();
-        Callback::from(move |_: DragEvent| drag_over.set(false))
-    };
-
-    let on_drop = {
-        let state = state.clone();
-        let drag_over = drag_over.clone();
-        let id = membership.id;
-        Callback::from(move |e: DragEvent| {
-            e.prevent_default();
-            drag_over.set(false);
-            let Some(dt) = e.data_transfer() else { return };
-            let Ok(dragged) = dt.get_data("text/plain") else {
+        let membership_id = membership.id;
+        Callback::from(move |e: PointerEvent| {
+            if e.button() != 0 {
                 return;
-            };
-            if let Ok(dragged_id) = Uuid::parse_str(&dragged) {
-                if dragged_id != id {
-                    state.dispatch(Action::MoveBefore {
-                        membership_id: dragged_id,
-                        before_id: id,
-                    });
+            }
+            let is_touch = e.pointer_type() == "touch" || e.pointer_type() == "pen";
+            let pointer_id = e.pointer_id();
+            let start_x = e.client_x() as f64;
+            let start_y = e.client_y() as f64;
+            *tracker.borrow_mut() = Some(DragTracker {
+                pointer_id,
+                start_x,
+                start_y,
+                last_y: start_y,
+                is_touch,
+                active: false,
+                scrolling: false,
+            });
+
+            if let Some(target) = e.target() {
+                if let Ok(el) = target.dyn_into::<web_sys::Element>() {
+                    if let Ok(Some(item_main)) = el.closest(".item-main") {
+                        let _ = item_main.set_pointer_capture(pointer_id);
+                    }
                 }
             }
-        })
-    };
 
-    // Dropping onto the chevron nests the dragged item under this one instead of
-    // reordering past it.
-    let on_chevron_drag_over = {
-        let chevron_drag_over = chevron_drag_over.clone();
-        Callback::from(move |e: DragEvent| {
-            e.prevent_default();
-            e.stop_propagation();
-            chevron_drag_over.set(true);
-        })
-    };
-    let on_chevron_drag_leave = {
-        let chevron_drag_over = chevron_drag_over.clone();
-        Callback::from(move |e: DragEvent| {
-            e.stop_propagation();
-            chevron_drag_over.set(false);
-        })
-    };
-    let on_chevron_drop = {
-        let chevron_drag_over = chevron_drag_over.clone();
-        let on_move_into = props.on_move_into.clone();
-        let target_item_id = item.id;
-        Callback::from(move |e: DragEvent| {
-            e.prevent_default();
-            e.stop_propagation();
-            chevron_drag_over.set(false);
-            let Some(dt) = e.data_transfer() else { return };
-            let Ok(dragged) = dt.get_data("text/plain") else {
-                return;
-            };
-            if let Ok(dragged_id) = Uuid::parse_str(&dragged) {
-                on_move_into.emit((dragged_id, target_item_id));
+            if is_touch {
+                let tracker2 = tracker.clone();
+                let on_drag_start2 = on_drag_start.clone();
+                let timeout = Timeout::new(TOUCH_HOLD_MS, move || {
+                    let mut armed = false;
+                    if let Some(t) = tracker2.borrow_mut().as_mut() {
+                        if t.pointer_id == pointer_id && !t.active && !t.scrolling {
+                            t.active = true;
+                            armed = true;
+                        }
+                    }
+                    if armed {
+                        on_drag_start2.emit(membership_id);
+                    }
+                });
+                *hold_timer.borrow_mut() = Some(timeout);
             }
         })
     };
+
+    let on_pointer_move = {
+        let tracker = tracker.clone();
+        let hold_timer = hold_timer.clone();
+        let on_drag_start = props.on_drag_start.clone();
+        let on_drag_hover = props.on_drag_hover.clone();
+        let membership_id = membership.id;
+        Callback::from(move |e: PointerEvent| {
+            let Some(mut t) = tracker.borrow().clone() else {
+                return;
+            };
+            if t.pointer_id != e.pointer_id() {
+                return;
+            }
+            let x = e.client_x() as f64;
+            let y = e.client_y() as f64;
+
+            if t.active {
+                e.prevent_default();
+                on_drag_hover.emit(hover_target_at(x, y, membership_id));
+                return;
+            }
+
+            if t.scrolling {
+                if let Some(win) = web_sys::window() {
+                    win.scroll_by_with_x_and_y(0.0, t.last_y - y);
+                }
+                t.last_y = y;
+                *tracker.borrow_mut() = Some(t);
+                return;
+            }
+
+            let dx = x - t.start_x;
+            let dy = y - t.start_y;
+            if t.is_touch {
+                // Moved before the hold armed: hand off to a manual scroll instead.
+                if dx.abs() > TOUCH_CANCEL_THRESHOLD || dy.abs() > TOUCH_CANCEL_THRESHOLD {
+                    *hold_timer.borrow_mut() = None;
+                    t.scrolling = true;
+                    if let Some(win) = web_sys::window() {
+                        win.scroll_by_with_x_and_y(0.0, -dy);
+                    }
+                    t.last_y = y;
+                    *tracker.borrow_mut() = Some(t);
+                }
+                return;
+            }
+
+            if dx.abs() <= MOUSE_DRAG_THRESHOLD && dy.abs() <= MOUSE_DRAG_THRESHOLD {
+                return;
+            }
+            t.active = true;
+            *tracker.borrow_mut() = Some(t.clone());
+            on_drag_start.emit(membership_id);
+            e.prevent_default();
+            on_drag_hover.emit(hover_target_at(x, y, membership_id));
+        })
+    };
+
+    let on_pointer_up = {
+        let tracker = tracker.clone();
+        let hold_timer = hold_timer.clone();
+        let state = state.clone();
+        let on_drag_hover = props.on_drag_hover.clone();
+        let on_drag_end = props.on_drag_end.clone();
+        let membership_id = membership.id;
+        Callback::from(move |e: PointerEvent| {
+            let Some(t) = tracker.borrow().clone() else {
+                return;
+            };
+            if t.pointer_id != e.pointer_id() {
+                return;
+            }
+            *hold_timer.borrow_mut() = None;
+            *tracker.borrow_mut() = None;
+            if t.active {
+                let target = hover_target_at(
+                    e.client_x() as f64,
+                    e.client_y() as f64,
+                    membership_id,
+                );
+                match target {
+                    Some(DragHoverTarget::Reorder(before_id)) => {
+                        state.dispatch(Action::MoveBefore {
+                            membership_id,
+                            before_id,
+                        });
+                    }
+                    Some(DragHoverTarget::Nest(target_item_id)) => {
+                        state.dispatch(Action::MoveInto {
+                            membership_id,
+                            target_item_id,
+                        });
+                    }
+                    None => {}
+                }
+                on_drag_hover.emit(None);
+                on_drag_end.emit(());
+            }
+        })
+    };
+
+    let on_pointer_cancel = {
+        let tracker = tracker.clone();
+        let hold_timer = hold_timer.clone();
+        let on_drag_hover = props.on_drag_hover.clone();
+        let on_drag_end = props.on_drag_end.clone();
+        Callback::from(move |_: PointerEvent| {
+            *hold_timer.borrow_mut() = None;
+            let was_active = tracker.borrow().as_ref().map(|t| t.active).unwrap_or(false);
+            *tracker.borrow_mut() = None;
+            if was_active {
+                on_drag_hover.emit(None);
+                on_drag_end.emit(());
+            }
+        })
+    };
+
+    let stop_pointer_down = Callback::from(|e: PointerEvent| e.stop_propagation());
 
     let notes_preview = item
         .notes
@@ -667,27 +806,26 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         .map(|line| line.trim())
         .filter(|line| !line.is_empty());
 
+    let is_hover_target = props.hover_membership == Some(membership.id);
+    let is_nest_hover = props.hover_nest_item == Some(item.id);
+
     let row_class = classes!(
         "item",
         item.done.then_some("done"),
         (!membership.visible).then_some("hidden-row"),
-        (*drag_over).then_some("drag-over"),
+        is_hover_target.then_some("drag-over"),
         is_dragging_this.then_some("dragging")
     );
 
     html! {
-        <li
-            class={row_class}
-            ondragover={on_drag_over}
-            ondragleave={on_drag_leave}
-            ondrop={on_drop}
-        >
+        <li class={row_class} data-membership-id={membership.id.to_string()}>
             <div
                 class="item-main"
                 onclick={open_or_edit}
-                draggable="true"
-                ondragstart={on_drag_start}
-                ondragend={on_drag_end}
+                onpointerdown={on_pointer_down}
+                onpointermove={on_pointer_move}
+                onpointerup={on_pointer_up}
+                onpointercancel={on_pointer_cancel}
             >
                 <span class="drag-handle" aria-hidden="true">{ drag_handle_icon() }</span>
                 if item.is_note {
@@ -698,9 +836,8 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                     <input
                         type="checkbox"
                         checked={item.done}
-                        draggable="false"
                         onclick={toggle_done}
-                        ondragstart={no_drag_start.clone()}
+                        onpointerdown={stop_pointer_down.clone()}
                     />
                 }
                 <div class="item-title-group">
@@ -714,11 +851,10 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 }
                 if drag_active && !is_dragging_this {
                     <span
-                        class={classes!("nest-target", (*chevron_drag_over).then_some("drag-over"))}
+                        class={classes!("nest-target", is_nest_hover.then_some("drag-over"))}
                         title="Drop to move inside"
-                        ondragover={on_chevron_drag_over}
-                        ondragleave={on_chevron_drag_leave}
-                        ondrop={on_chevron_drop}
+                        data-drop-item={item.id.to_string()}
+                        onpointerdown={stop_pointer_down}
                     >
                         { chevron_icon() }
                     </span>
@@ -726,8 +862,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                     <button
                         class="edit-btn"
                         onclick={edit}
-                        draggable="false"
-                        ondragstart={no_drag_start}
+                        onpointerdown={stop_pointer_down}
                         title="Edit"
                         aria-label="Edit"
                     >

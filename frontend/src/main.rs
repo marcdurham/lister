@@ -9,8 +9,8 @@ mod store;
 mod sync;
 
 use components::{
-    AdminPage, AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow,
-    ListManager, SessionButton, SettingsMenu, TrashView,
+    AdminPage, AuthScreen, Breadcrumbs, Composer, DragHoverTarget, GoogleImportDialog, ItemEditor,
+    ItemRow, ListManager, SessionButton, SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -57,6 +57,8 @@ fn app() -> Html {
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
     let dragging = use_state(|| None::<Uuid>);
+    let hover_membership = use_state(|| None::<Uuid>);
+    let hover_nest_item = use_state(|| None::<Uuid>);
     let search = use_state(|| None::<String>);
 
     // Resolve the current session once on mount.
@@ -220,19 +222,32 @@ fn app() -> Html {
         let dragging = dragging.clone();
         Callback::from(move |id: Uuid| dragging.set(Some(id)))
     };
+    let on_drag_hover = {
+        let hover_membership = hover_membership.clone();
+        let hover_nest_item = hover_nest_item.clone();
+        Callback::from(move |target: Option<DragHoverTarget>| match target {
+            Some(DragHoverTarget::Reorder(id)) => {
+                hover_membership.set(Some(id));
+                hover_nest_item.set(None);
+            }
+            Some(DragHoverTarget::Nest(id)) => {
+                hover_membership.set(None);
+                hover_nest_item.set(Some(id));
+            }
+            None => {
+                hover_membership.set(None);
+                hover_nest_item.set(None);
+            }
+        })
+    };
     let on_drag_end = {
         let dragging = dragging.clone();
-        Callback::from(move |_: ()| dragging.set(None))
-    };
-    let on_move_into = {
-        let state = state.clone();
-        let dragging = dragging.clone();
-        Callback::from(move |(membership_id, target_item_id): (Uuid, Uuid)| {
+        let hover_membership = hover_membership.clone();
+        let hover_nest_item = hover_nest_item.clone();
+        Callback::from(move |_: ()| {
             dragging.set(None);
-            state.dispatch(Action::MoveInto {
-                membership_id,
-                target_item_id,
-            });
+            hover_membership.set(None);
+            hover_nest_item.set(None);
         })
     };
 
@@ -382,9 +397,11 @@ fn app() -> Html {
                                 on_open={on_open.clone()}
                                 on_edit={on_edit.clone()}
                                 dragging={*dragging}
+                                hover_membership={*hover_membership}
+                                hover_nest_item={*hover_nest_item}
                                 on_drag_start={on_drag_start.clone()}
+                                on_drag_hover={on_drag_hover.clone()}
                                 on_drag_end={on_drag_end.clone()}
-                                on_move_into={on_move_into.clone()}
                             />
                         }
                     }) }

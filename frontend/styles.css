@@ -386,6 +386,7 @@ header h1 {
     align-items: center;
     gap: 0.5rem;
     cursor: grab;
+    touch-action: none;
 }
 
 .item-main:active {

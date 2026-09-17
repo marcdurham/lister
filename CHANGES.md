@@ -67,3 +67,19 @@
   back to add mode.
 - Added a "Copy list" button that copies the current list as a markdown bullet list of
   just the item titles, with children indented under their parents.
+
+## 2026-09-17 13:31 PDT
+- Replaced the native HTML5 drag-and-drop on item rows with a hand-rolled pointer-events
+  implementation, since native `draggable`/`dragstart` never fires at all on touch
+  devices. A mouse press-and-drag on the row body now starts reordering as soon as it
+  moves past a small threshold; a touch/pen press arms into a drag after a brief hold
+  (native scrolling is disabled on the row via `touch-action: none` so that hold can be
+  timed), and if the finger moves before the hold elapses it's treated as an ordinary
+  scroll (scrolled manually in JS) instead of a drag, so scrolling a list that starts on
+  an item still works.
+- Fixed a bug in the first pass of that touch support where the hold timer's closure
+  captured a `use_state` snapshot that never reflected later updates (a `UseStateHandle`
+  read in a closure only ever sees the value from the render that created it), so the
+  hold-to-arm never actually fired. Switched the drag tracker to `use_mut_ref`
+  (real shared `Rc<RefCell<_>>` state) so it's read live from every closure, including
+  the delayed timer.
