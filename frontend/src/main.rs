@@ -347,6 +347,7 @@ fn app() -> Html {
                         state={state.clone()}
                         is_admin={user.as_ref().is_some_and(|u| u.is_admin)}
                         is_logged_in={user.is_some()}
+                        current_parent={current_parent}
                         on_open_admin={open_admin}
                     />
                     <SessionButton

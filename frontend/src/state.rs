@@ -192,11 +192,14 @@ pub enum Action {
     SetOnline(bool),
     SetSyncing(bool),
     ImportGoogleTasks(Vec<crate::google::ImportedTaskList>),
-    /// Adds a parsed markdown import's items/memberships as new top-level roots,
-    /// appended after whatever top-level items already exist.
+    /// Adds a parsed markdown import's items/memberships, reparenting whichever ones
+    /// have no parent (normally just the file's wrapper item) onto `parent` (or leaving
+    /// them at the top level when `parent` is `None`), appended after whatever children
+    /// it already has.
     ImportMarkdown {
         items: Vec<Item>,
         memberships: Vec<Membership>,
+        parent: Option<Uuid>,
     },
     ImportJson {
         items: Vec<Item>,
@@ -486,12 +489,16 @@ impl Reducible for AppState {
                 }
                 Rc::new(next)
             }
-            Action::ImportMarkdown { items, memberships } => {
+            Action::ImportMarkdown {
+                items,
+                memberships,
+                parent,
+            } => {
                 let mut next = (*self).clone();
                 // Offset the parsed roots' positions so they land after whatever
-                // top-level items already exist, instead of interleaving with them.
+                // children `parent` already has, instead of interleaving with them.
                 let offset = next
-                    .children(None, true)
+                    .children(parent, true)
                     .last()
                     .map(|(_, m)| m.position)
                     .unwrap_or(0.0);
@@ -501,6 +508,7 @@ impl Reducible for AppState {
                 for membership in memberships {
                     let mut membership = membership;
                     if membership.parent_id.is_none() {
+                        membership.parent_id = parent;
                         membership.position += offset;
                     }
                     store::put_membership(membership.clone());
@@ -508,6 +516,15 @@ impl Reducible for AppState {
                 }
                 for item in items {
                     next.items.insert(item.id, item);
+                }
+                if let Some(parent_id) = parent {
+                    if let Some(parent_item) = next.items.get_mut(&parent_id) {
+                        if !parent_item.is_note && !parent_item.is_list {
+                            parent_item.is_list = true;
+                            parent_item.updated_at = Utc::now();
+                            store::put_item(parent_item.clone());
+                        }
+                    }
                 }
                 Rc::new(next)
             }

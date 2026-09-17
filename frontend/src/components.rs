@@ -1576,6 +1576,9 @@ pub struct SettingsMenuProps {
     /// Google Tasks import is tied to a server-side account, so it's hidden for a
     /// logged-out guest; file export/import work fully offline and stay available.
     pub is_logged_in: bool,
+    /// The list currently being viewed - a markdown import lands here as a new item,
+    /// as a top-level list when this is `None`.
+    pub current_parent: Option<Uuid>,
     pub on_open_admin: Callback<()>,
 }
 
@@ -1644,12 +1647,22 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
 
     let on_markdown_file_change = {
         let state = props.state.clone();
+        let current_parent = props.current_parent;
         Callback::from(move |e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
             let Some(file) = input.files().and_then(|list| list.get(0)) else {
                 return;
             };
             input.set_value("");
+
+            // The file's name (minus the .md/.markdown extension) becomes the imported
+            // list's title.
+            let raw_name = file.name();
+            let list_name = raw_name
+                .strip_suffix(".md")
+                .or_else(|| raw_name.strip_suffix(".markdown"))
+                .unwrap_or(&raw_name)
+                .to_string();
 
             let state = state.clone();
             let Ok(reader) = FileReader::new() else {
@@ -1663,7 +1676,7 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                 let Some(text) = result.as_string() else {
                     return;
                 };
-                let import = markdown::parse_markdown(&text);
+                let mut import = markdown::parse_markdown(&text);
                 if import.items.is_empty() {
                     if let Some(window) = web_sys::window() {
                         let _ = window.alert_with_message(
@@ -1672,9 +1685,23 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                     }
                     return;
                 }
+                // Wrap the whole import in a single new list item, named after the
+                // file, so it lands as one item in the current list.
+                let mut wrapper = Item::new(list_name, false);
+                wrapper.is_list = true;
+                let wrapper_id = wrapper.id;
+                for m in import.memberships.iter_mut() {
+                    if m.parent_id.is_none() {
+                        m.parent_id = Some(wrapper_id);
+                    }
+                }
+                import.items.push(wrapper);
+                import.memberships.push(Membership::new(wrapper_id, None, 0.0));
+
                 state.dispatch(Action::ImportMarkdown {
                     items: import.items,
                     memberships: import.memberships,
+                    parent: current_parent,
                 });
             });
             reader.set_onload(Some(onload.as_ref().unchecked_ref()));

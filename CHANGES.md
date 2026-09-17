@@ -98,3 +98,9 @@
   already exists. Added unit tests in `frontend/src/markdown.rs` covering heading
   nesting, indentation nesting, notes collection, and the TODO/DONE rules (run via
   `cargo test -p frontend --bin frontend`, since the crate has no `[lib]` target).
+
+## 2026-09-17 14:11 PDT
+- A markdown import now lands as a single new item inside whatever list you're
+  currently viewing (top-level if you're at the root "Lists" screen), instead of always
+  adding new top-level lists. The imported item is named after the file (its `.md`/
+  `.markdown` extension stripped), and everything the file parsed into is nested under it.
