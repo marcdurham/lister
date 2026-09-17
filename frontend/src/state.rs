@@ -554,3 +554,45 @@ impl Reducible for AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(text: &str, is_note: bool, is_list: bool, done: bool) -> Item {
+        let mut i = Item::new(text.to_string(), is_note);
+        i.is_list = is_list;
+        i.done = done;
+        i
+    }
+
+    fn state_with(rows: Vec<Item>) -> AppState {
+        let mut items = HashMap::new();
+        let mut memberships = HashMap::new();
+        for (position, item) in rows.into_iter().enumerate() {
+            let membership = Membership::new(item.id, None, position as f64);
+            memberships.insert(membership.id, membership);
+            items.insert(item.id, item);
+        }
+        AppState {
+            items,
+            memberships,
+            online: true,
+            syncing: false,
+        }
+    }
+
+    #[test]
+    fn copy_as_markdown_prefixes_tasks_with_todo_or_done() {
+        let state = state_with(vec![
+            item("Buy milk", false, false, false),
+            item("Pay rent", false, false, true),
+            item("Just a note", true, false, false),
+            item("A sublist", false, true, false),
+        ]);
+        assert_eq!(
+            state.copy_as_markdown(None),
+            "- TODO: Buy milk\n- DONE: Pay rent\n- Just a note\n- A sublist\n"
+        );
+    }
+}
