@@ -8,7 +8,7 @@ use uuid::Uuid;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{FileReader, HtmlInputElement};
+use web_sys::{DragEvent, FileReader, HtmlInputElement};
 use yew::prelude::*;
 
 fn note_icon() -> Html {
@@ -18,6 +18,55 @@ fn note_icon() -> Html {
             <line x1="4.5" y1="5" x2="11.5" y2="5" stroke="currentColor" stroke-width="1.1"/>
             <line x1="4.5" y1="7.7" x2="11.5" y2="7.7" stroke="currentColor" stroke-width="1.1"/>
             <line x1="4.5" y1="10.4" x2="9" y2="10.4" stroke="currentColor" stroke-width="1.1"/>
+        </svg>
+    }
+}
+
+/// Icon shown for a task that has children - it's really a sub-list now, not a checkable item.
+fn list_icon() -> Html {
+    html! {
+        <svg class="list-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <circle cx="2.2" cy="3.2" r="1" fill="currentColor"/>
+            <circle cx="2.2" cy="8" r="1" fill="currentColor"/>
+            <circle cx="2.2" cy="12.8" r="1" fill="currentColor"/>
+            <line x1="5" y1="3.2" x2="14" y2="3.2" stroke="currentColor" stroke-width="1.3"/>
+            <line x1="5" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.3"/>
+            <line x1="5" y1="12.8" x2="14" y2="12.8" stroke="currentColor" stroke-width="1.3"/>
+        </svg>
+    }
+}
+
+/// Six-dot grip handle used to drag-reorder a row.
+fn drag_handle_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="12" height="16" aria-hidden="true">
+            <circle cx="5" cy="3" r="1.2" fill="currentColor"/>
+            <circle cx="5" cy="8" r="1.2" fill="currentColor"/>
+            <circle cx="5" cy="13" r="1.2" fill="currentColor"/>
+            <circle cx="11" cy="3" r="1.2" fill="currentColor"/>
+            <circle cx="11" cy="8" r="1.2" fill="currentColor"/>
+            <circle cx="11" cy="13" r="1.2" fill="currentColor"/>
+        </svg>
+    }
+}
+
+fn edit_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path
+                d="M11.1 1.6a1.6 1.6 0 0 1 2.3 2.3l-7.9 7.9-3 .7.7-3 7.9-7.9z"
+                fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"
+            />
+        </svg>
+    }
+}
+
+fn more_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <circle cx="3" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="8" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="13" cy="8" r="1.3" fill="currentColor"/>
         </svg>
     }
 }
@@ -256,10 +305,6 @@ pub struct ItemRowProps {
     pub state: UseReducerHandle<AppState>,
     pub item: Item,
     pub membership: Membership,
-    pub is_first: bool,
-    pub is_last: bool,
-    pub prev_id: Option<Uuid>,
-    pub next_id: Option<Uuid>,
     pub on_open: Callback<Uuid>,
     pub on_edit: Callback<Uuid>,
 }
@@ -271,11 +316,13 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let picker_open = use_state(|| false);
     let confirm_remove = use_state(|| false);
     let remove_children = use_state(|| true);
+    let drag_over = use_state(|| false);
 
     let item = &props.item;
     let membership = &props.membership;
     let state = props.state.clone();
     let child_count = state.direct_child_count(item.id);
+    let is_list = !item.is_note && child_count > 0;
 
     let toggle_done = {
         let state = state.clone();
@@ -286,9 +333,27 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
+    // Tapping the row opens the sub-list if this item has children, otherwise edits it.
+    let open_or_edit = {
+        let state = state.clone();
+        let on_open = props.on_open.clone();
+        let on_edit = props.on_edit.clone();
+        let id = item.id;
+        Callback::from(move |_: MouseEvent| {
+            if state.has_children(id) {
+                on_open.emit(id);
+            } else {
+                on_edit.emit(id);
+            }
+        })
+    };
+
     let toggle_expanded = {
         let expanded = expanded.clone();
-        Callback::from(move |_: MouseEvent| expanded.set(!*expanded))
+        Callback::from(move |e: MouseEvent| {
+            e.stop_propagation();
+            expanded.set(!*expanded);
+        })
     };
 
     let toggle_notes = {
@@ -308,19 +373,13 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    let open = {
-        let on_open = props.on_open.clone();
-        let id = item.id;
-        Callback::from(move |e: MouseEvent| {
-            e.stop_propagation();
-            on_open.emit(id);
-        })
-    };
-
     let edit = {
         let on_edit = props.on_edit.clone();
         let id = item.id;
-        Callback::from(move |_: MouseEvent| on_edit.emit(id))
+        Callback::from(move |e: MouseEvent| {
+            e.stop_propagation();
+            on_edit.emit(id);
+        })
     };
 
     let toggle_visible = {
@@ -358,66 +417,118 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    let move_up = props.prev_id.map(|prev_id| {
-        let state = state.clone();
-        let id = membership.id;
-        Callback::from(move |e: MouseEvent| {
-            e.stop_propagation();
-            state.dispatch(Action::Reorder {
-                membership_id: id,
-                swap_with: prev_id,
-            })
-        })
-    });
-
-    let move_down = props.next_id.map(|next_id| {
-        let state = state.clone();
-        let id = membership.id;
-        Callback::from(move |e: MouseEvent| {
-            e.stop_propagation();
-            state.dispatch(Action::Reorder {
-                membership_id: id,
-                swap_with: next_id,
-            })
-        })
-    });
-
     let toggle_picker = {
         let picker_open = picker_open.clone();
         Callback::from(move |_: MouseEvent| picker_open.set(!*picker_open))
     };
 
+    // Drag-to-reorder: the handle starts the drag, and dropping onto another row swaps
+    // the two items' positions (the same swap the old up/down buttons performed).
+    let on_drag_start = {
+        let id = membership.id;
+        Callback::from(move |e: DragEvent| {
+            if let Some(dt) = e.data_transfer() {
+                let _ = dt.set_data("text/plain", &id.to_string());
+                dt.set_effect_allowed("move");
+            }
+        })
+    };
+
+    let on_handle_click = Callback::from(|e: MouseEvent| e.stop_propagation());
+
+    let on_drag_over = {
+        let drag_over = drag_over.clone();
+        Callback::from(move |e: DragEvent| {
+            e.prevent_default();
+            drag_over.set(true);
+        })
+    };
+
+    let on_drag_leave = {
+        let drag_over = drag_over.clone();
+        Callback::from(move |_: DragEvent| drag_over.set(false))
+    };
+
+    let on_drop = {
+        let state = state.clone();
+        let drag_over = drag_over.clone();
+        let id = membership.id;
+        Callback::from(move |e: DragEvent| {
+            e.prevent_default();
+            drag_over.set(false);
+            let Some(dt) = e.data_transfer() else { return };
+            let Ok(dragged) = dt.get_data("text/plain") else {
+                return;
+            };
+            if let Ok(dragged_id) = Uuid::parse_str(&dragged) {
+                if dragged_id != id {
+                    state.dispatch(Action::Reorder {
+                        membership_id: dragged_id,
+                        swap_with: id,
+                    });
+                }
+            }
+        })
+    };
+
     let removable_children = state.only_child_descendant_ids(item.id).len();
+
+    let notes_preview = item
+        .notes
+        .as_deref()
+        .and_then(|n| n.lines().next())
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty());
 
     let row_class = classes!(
         "item",
         item.done.then_some("done"),
-        (!membership.visible).then_some("hidden-row")
+        (!membership.visible).then_some("hidden-row"),
+        (*drag_over).then_some("drag-over")
     );
 
     html! {
-        <li class={row_class}>
-            <div class="item-main" onclick={toggle_expanded}>
-                <div class="reorder">
-                    <button disabled={props.is_first} onclick={move_up.clone().unwrap_or_default()}>{ "▲" }</button>
-                    <button disabled={props.is_last} onclick={move_down.clone().unwrap_or_default()}>{ "▼" }</button>
-                </div>
-                if !item.is_note {
-                    <input type="checkbox" checked={item.done} onclick={toggle_done} />
-                } else {
+        <li
+            class={row_class}
+            ondragover={on_drag_over}
+            ondragleave={on_drag_leave}
+            ondrop={on_drop}
+        >
+            <div class="item-main" onclick={open_or_edit}>
+                <span
+                    class="drag-handle"
+                    draggable="true"
+                    ondragstart={on_drag_start}
+                    onclick={on_handle_click}
+                    title="Drag to reorder"
+                >
+                    { drag_handle_icon() }
+                </span>
+                if item.is_note {
                     { note_icon() }
+                } else if is_list {
+                    { list_icon() }
+                } else {
+                    <input type="checkbox" checked={item.done} onclick={toggle_done} />
                 }
-                <span class="item-text">{ &item.text }</span>
+                <div class="item-title-group">
+                    <span class="item-text">{ &item.text }</span>
+                    if let Some(preview) = notes_preview {
+                        <span class="item-notes-preview">{ preview }</span>
+                    }
+                </div>
                 if child_count > 0 {
                     <span class="child-count">{ child_count }</span>
                 }
-                <button class={classes!("open-btn", (!state.has_children(item.id)).then_some("subtle"))} onclick={open}>
-                    { "Open ▸" }
+                <button class="more-btn" onclick={toggle_expanded} title="More actions" aria-label="More actions">
+                    { more_icon() }
+                </button>
+                <button class="edit-btn" onclick={edit} title="Edit" aria-label="Edit">
+                    { edit_icon() }
                 </button>
             </div>
             if *expanded {
                 <div class="item-actions">
-                    <button onclick={edit}>{ "Edit" }</button>
                     <button onclick={toggle_notes}>{ if item.notes.is_some() { "Notes*" } else { "Notes" } }</button>
                     <button onclick={toggle_visible}>{ if membership.visible { "Hide" } else { "Show" } }</button>
                     <button onclick={toggle_picker}>{ "Add to list" }</button>

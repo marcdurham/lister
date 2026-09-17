@@ -294,6 +294,11 @@ header h1 {
     opacity: 0.5;
 }
 
+.item.drag-over {
+    outline: 2px dashed #1f6feb;
+    outline-offset: 2px;
+}
+
 .item-main {
     display: flex;
     align-items: center;
@@ -301,29 +306,28 @@ header h1 {
     cursor: pointer;
 }
 
-.reorder {
+.drag-handle {
+    display: flex;
+    align-items: center;
+    color: #9aa5b1;
+    cursor: grab;
+    flex-shrink: 0;
+    touch-action: none;
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+.item-title-group {
     display: flex;
     flex-direction: column;
-}
-
-.reorder button {
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    line-height: 1;
-    font-size: 0.6rem;
-    color: #9aa5b1;
-    padding: 0;
-}
-
-.reorder button:disabled {
-    opacity: 0.25;
-    cursor: default;
+    flex: 1;
+    min-width: 0;
 }
 
 .item-text {
     cursor: pointer;
-    flex: 1;
 }
 
 .item.done .item-text {
@@ -331,8 +335,23 @@ header h1 {
     color: #9aa5b1;
 }
 
+.item-notes-preview {
+    font-size: 0.75rem;
+    color: #9aa5b1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .note-icon {
     color: #7048e8;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+}
+
+.list-icon {
+    color: #1f6feb;
     flex-shrink: 0;
     width: 16px;
     height: 16px;
@@ -359,16 +378,24 @@ header h1 {
     margin-left: 0.35rem;
 }
 
-.open-btn {
+.more-btn,
+.edit-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: transparent;
-    color: #1f6feb;
+    color: #9aa5b1;
     cursor: pointer;
-    font-size: 0.85rem;
+    flex-shrink: 0;
+    padding: 0.25rem;
+    border-radius: 4px;
 }
 
-.open-btn.subtle {
-    color: #9aa5b1;
+.more-btn:hover,
+.edit-btn:hover {
+    background: #f1f3f5;
+    color: #495057;
 }
 
 .item-actions {
@@ -666,5 +693,18 @@ header h1 {
     }
     .settings-item:hover {
         background: #3e4c59;
+    }
+    .item-notes-preview {
+        color: #9aa5b1;
+    }
+    .drag-handle,
+    .more-btn,
+    .edit-btn {
+        color: #9aa5b1;
+    }
+    .more-btn:hover,
+    .edit-btn:hover {
+        background: #3e4c59;
+        color: #f5f6f8;
     }
 }

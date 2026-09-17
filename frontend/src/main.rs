@@ -169,7 +169,6 @@ fn app() -> Html {
 
     let current_parent = path.last().copied();
     let rows = state.children(current_parent, *show_hidden);
-    let ids: Vec<Uuid> = rows.iter().map(|(_, m)| m.id).collect();
 
     let user = match &*session {
         SessionState::LoggedIn(user) => user.clone(),
@@ -221,19 +220,13 @@ fn app() -> Html {
                     { " Show hidden items" }
                 </label>
                 <ul class="items">
-                    { for rows.iter().enumerate().map(|(idx, (item, membership))| {
-                        let prev_id = (idx > 0).then(|| ids[idx - 1]);
-                        let next_id = (idx + 1 < ids.len()).then(|| ids[idx + 1]);
+                    { for rows.iter().map(|(item, membership)| {
                         html! {
                             <ItemRow
                                 key={membership.id.to_string()}
                                 state={state.clone()}
                                 item={item.clone()}
                                 membership={membership.clone()}
-                                is_first={idx == 0}
-                                is_last={idx + 1 == ids.len()}
-                                prev_id={prev_id}
-                                next_id={next_id}
                                 on_open={on_open.clone()}
                                 on_edit={on_edit.clone()}
                             />
