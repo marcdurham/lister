@@ -293,7 +293,14 @@ fn app() -> Html {
                     </div>
                     if let Some(user) = &user {
                         <span class="user-email">{ &user.email }</span>
-                        <SettingsMenu state={state.clone()} is_admin={user.is_admin} on_open_admin={open_admin} />
+                    }
+                    <SettingsMenu
+                        state={state.clone()}
+                        is_admin={user.as_ref().is_some_and(|u| u.is_admin)}
+                        is_logged_in={user.is_some()}
+                        on_open_admin={open_admin}
+                    />
+                    if user.is_some() {
                         <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
                     } else {
                         <button class="login-btn" onclick={open_login}>{ "Log in" }</button>

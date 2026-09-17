@@ -42,3 +42,9 @@
   list); logging in swaps in the account's data and starts syncing to the server
   as before. The backend's `/api/sync` already rejected unauthenticated requests,
   so guests simply keep working offline until they choose to log in.
+
+## 2026-09-17 12:00 PDT
+- Replaced the gear glyph on the header's settings button with a proper hamburger-menu
+  SVG icon, and made the menu itself visible even when logged out, so a guest can still
+  export/import tasks as JSON files without an account. "Import from Google Tasks" stays
+  hidden until logged in, since it's tied to a server-side account via OAuth.

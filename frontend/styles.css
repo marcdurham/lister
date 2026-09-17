@@ -173,8 +173,9 @@ header h1 {
     border: none;
     background: #e4e7eb;
     color: #495057;
-    font-size: 0.95rem;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 1.9rem;
     height: 1.9rem;
     border-radius: 999px;
