@@ -269,21 +269,8 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
         Callback::from(move |_: MouseEvent| on_navigate.emit(vec![]))
     };
 
-    let up = {
-        let on_navigate = props.on_navigate.clone();
-        let path = props.path.clone();
-        Callback::from(move |_: MouseEvent| {
-            let mut next = path.clone();
-            next.pop();
-            on_navigate.emit(next);
-        })
-    };
-
     html! {
         <nav class="breadcrumbs">
-            if !props.path.is_empty() {
-                <button class="up-btn" onclick={up} title="Up one level">{ "↑ Up" }</button>
-            }
             <a onclick={home}>{ "Lists" }</a>
             { for props.path.iter().enumerate().map(|(idx, id)| {
                 let name = props.state.items.get(id).map(|i| i.text.clone()).unwrap_or_default();

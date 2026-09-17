@@ -16,10 +16,26 @@ use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
 use state::{Action, AppState};
 use uuid::Uuid;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 const SYNC_INTERVAL_MS: u32 = 30_000;
+
+/// Encode a navigation path into the value stored in `history.state`.
+fn path_to_js(path: &[Uuid]) -> JsValue {
+    let strs: Vec<String> = path.iter().map(|id| id.to_string()).collect();
+    JsValue::from_str(&serde_json::to_string(&strs).unwrap_or_default())
+}
+
+/// Decode a navigation path back out of `history.state` (or the empty path if absent/invalid).
+fn js_to_path(value: JsValue) -> Vec<Uuid> {
+    value
+        .as_string()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .map(|strs| strs.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect())
+        .unwrap_or_default()
+}
 
 #[derive(Clone, PartialEq)]
 enum SessionState {
@@ -125,17 +141,57 @@ fn app() -> Html {
         });
     }
 
-    let on_navigate = {
+    // Push a browser history entry for every in-app navigation, so the browser's own
+    // back button walks back up the hierarchy one level at a time.
+    let navigate = {
         let path = path.clone();
-        Callback::from(move |new_path: Vec<Uuid>| path.set(new_path))
+        Callback::from(move |new_path: Vec<Uuid>| {
+            if let Some(window) = web_sys::window() {
+                if let Ok(history) = window.history() {
+                    let _ = history.push_state_with_url(&path_to_js(&new_path), "", None);
+                }
+            }
+            path.set(new_path);
+        })
     };
+
+    // Sync `path` from the browser's session history on back/forward navigation.
+    {
+        let path = path.clone();
+        use_effect_with((), move |_| {
+            if let Some(window) = web_sys::window() {
+                if let Ok(history) = window.history() {
+                    let _ = history.replace_state_with_url(&path_to_js(&[]), "", None);
+                }
+            }
+            let listener = EventListener::new(&web_sys::window().unwrap(), "popstate", move |e| {
+                if let Ok(event) = e.clone().dyn_into::<web_sys::PopStateEvent>() {
+                    path.set(js_to_path(event.state()));
+                }
+            });
+            move || drop(listener)
+        });
+    }
+
+    let on_navigate = navigate.clone();
 
     let on_open = {
         let path = path.clone();
+        let navigate = navigate.clone();
         Callback::from(move |id: Uuid| {
             let mut next = (*path).clone();
             next.push(id);
-            path.set(next);
+            navigate.emit(next);
+        })
+    };
+
+    let on_go_up = {
+        let path = path.clone();
+        let navigate = navigate.clone();
+        Callback::from(move |_: MouseEvent| {
+            let mut next = (*path).clone();
+            next.pop();
+            navigate.emit(next);
         })
     };
 
@@ -249,6 +305,13 @@ fn app() -> Html {
                     { " Show hidden items" }
                 </label>
                 <ul class="items">
+                    if current_parent.is_some() {
+                        <li class="item up-item" onclick={on_go_up}>
+                            <div class="item-main">
+                                <span class="item-text">{ ".." }</span>
+                            </div>
+                        </li>
+                    }
                     { for rows.iter().map(|(item, membership)| {
                         html! {
                             <ItemRow

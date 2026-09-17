@@ -226,17 +226,6 @@ header h1 {
     color: #9aa5b1;
 }
 
-.up-btn {
-    border: none;
-    background: #e4e7eb;
-    color: #1f2933;
-    font-size: 0.8rem;
-    padding: 0.2rem 0.55rem;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-right: 0.5rem;
-}
-
 .composer {
     display: flex;
     gap: 0.5rem;
@@ -303,6 +292,19 @@ header h1 {
 .item.drag-over {
     outline: 2px dashed #1f6feb;
     outline-offset: 2px;
+}
+
+.item.up-item {
+    cursor: pointer;
+    color: #616e7c;
+}
+
+.item.up-item .item-main {
+    cursor: pointer;
+}
+
+.item.up-item .item-text {
+    font-weight: 600;
 }
 
 .item-main {
@@ -790,7 +792,6 @@ header h1 {
         color: #cbd2d9;
     }
     .trash-btn,
-    .up-btn,
     .child-count,
     .trash-header button,
     .confirm-actions button,

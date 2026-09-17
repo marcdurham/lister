@@ -26,3 +26,11 @@
   of that list. Save applies all the additions/removals at once; Cancel/Back discards them.
   Prevents an item from being nested under itself or one of its own descendants.
 - Added `Action::RemoveMembership` and `AppState::descendant_ids` to support the manager.
+
+## 2026-09-17 10:55 PDT
+- The browser's back button now navigates up the list hierarchy one level at a time
+  (each in-app navigation pushes a history entry), matching the old "Up" button.
+- Removed the "Up" button; every list except the top level now shows a ".." row at the
+  top of its items that navigates up when clicked. Verified both in a local browser
+  session (multi-level navigate-in, then browser Back and the ".." row each correctly
+  step back up one level).
