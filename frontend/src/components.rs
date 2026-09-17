@@ -122,6 +122,32 @@ fn person_icon(filled: bool) -> Html {
     }
 }
 
+/// Floppy-disk glyph shown on the session button when this browser has never logged in,
+/// in place of the online/offline person icon - the connection state doesn't mean much
+/// for a guest who only has locally cached data.
+fn disk_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path
+                d="M2.5 2h9l2 2v9a0.5 0.5 0 0 1-0.5 0.5h-10.5a0.5 0.5 0 0 1-0.5-0.5v-10.5a0.5 0.5 0 0 1 0.5-0.5z"
+                fill="none" stroke="currentColor" stroke-width="1.2"
+            />
+            <rect x="4.3" y="2" width="5.4" height="3.4" fill="none" stroke="currentColor" stroke-width="1.1"/>
+            <rect x="4" y="8.3" width="8" height="5.2" fill="currentColor"/>
+        </svg>
+    }
+}
+
+/// Small clipboard glyph for the compact copy button next to the item editor's Text field.
+fn copy_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <rect x="5.5" y="5.5" width="8" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <path d="M3.5 10.5v-7a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+    }
+}
+
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
 }
@@ -281,6 +307,10 @@ impl ItemKind {
 pub struct SessionButtonProps {
     pub user: Option<auth::User>,
     pub online: bool,
+    /// True once this browser has completed a login/register at least once. While false,
+    /// the button shows a neutral "cached in browser" state instead of online/offline,
+    /// since network status isn't meaningful for a guest who's never signed in.
+    pub has_logged_in: bool,
     pub on_login: Callback<()>,
     pub on_logout: Callback<()>,
 }
@@ -288,9 +318,13 @@ pub struct SessionButtonProps {
 /// Combined login/online control: a single icon button whose ring shows online (green)
 /// vs offline (yellow), and whose glyph shows whether anyone is logged in. Clicking it
 /// opens a small menu with the status text, the account email, and a login/logout action.
+/// Before the first-ever login on this browser, the ring is blue, the glyph is a disk
+/// (this device's cached copy, not a live connection), and the status line reads "Cached
+/// in browser" - logging in is still offered from the same menu.
 #[function_component(SessionButton)]
 pub fn session_button(props: &SessionButtonProps) -> Html {
     let open = use_state(|| false);
+    let never_logged_in = !props.has_logged_in && props.user.is_none();
 
     let toggle = {
         let open = open.clone();
@@ -317,24 +351,42 @@ pub fn session_button(props: &SessionButtonProps) -> Html {
 
     let btn_class = classes!(
         "session-btn",
-        if props.online { "online" } else { "offline" }
+        if never_logged_in {
+            "cached"
+        } else if props.online {
+            "online"
+        } else {
+            "offline"
+        }
     );
+
+    let title = if never_logged_in {
+        "Cached in browser"
+    } else if props.online {
+        "Online"
+    } else {
+        "Offline"
+    };
 
     html! {
         <div class="session-menu">
             <button
                 class={btn_class}
                 onclick={toggle}
-                title={if props.online { "Online" } else { "Offline" }}
+                {title}
                 aria-label="Account and connection status"
             >
-                { person_icon(props.user.is_some()) }
+                if never_logged_in {
+                    { disk_icon() }
+                } else {
+                    { person_icon(props.user.is_some()) }
+                }
             </button>
             if *open {
                 <div class="settings-dropdown session-dropdown">
                     <div class="session-status-line">
-                        <span class={classes!("status-dot", if props.online { "online" } else { "offline" })}></span>
-                        { if props.online { "Online" } else { "Offline" } }
+                        <span class={classes!("status-dot", if never_logged_in { "cached" } else if props.online { "online" } else { "offline" })}></span>
+                        { title }
                     </div>
                     if let Some(user) = &props.user {
                         <div class="session-email">{ &user.email }</div>
@@ -433,20 +485,23 @@ pub fn composer(props: &ComposerProps) -> Html {
         let query = (*search).clone().unwrap_or_default();
         html! {
             <div class="composer composer-search">
+                <button class="composer-mode-btn" onclick={exit_search} title="Back to add">
+                    { plus_icon() }
+                </button>
                 <input
                     type="text"
                     placeholder="Search this list..."
                     value={query}
                     oninput={on_search_input}
                 />
-                <button class="composer-mode-btn" onclick={exit_search} title="Back to add">
-                    { plus_icon() }
-                </button>
             </div>
         }
     } else {
         html! {
             <div class="composer">
+                <button class="composer-mode-btn" onclick={enter_search} title="Search this list">
+                    { search_icon() }
+                </button>
                 <input
                     type="text"
                     placeholder={match *kind {
@@ -464,11 +519,67 @@ pub fn composer(props: &ComposerProps) -> Html {
                     <option value="list" selected={*kind == ItemKind::List}>{ "List" }</option>
                 </select>
                 <button {onclick}>{ "Add" }</button>
-                <button class="composer-mode-btn" onclick={enter_search} title="Search this list">
-                    { search_icon() }
-                </button>
             </div>
         }
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct ListHeaderProps {
+    pub item: Item,
+    pub on_edit: Callback<()>,
+}
+
+/// Shown above the composer bar while viewing a list: the list's own title and notes,
+/// each clamped to two lines with a click anywhere on the text expanding it in place,
+/// plus an edit button (identical to a row's) that opens the full item editor.
+#[function_component(ListHeader)]
+pub fn list_header(props: &ListHeaderProps) -> Html {
+    let text_expanded = use_state(|| false);
+    let notes_expanded = use_state(|| false);
+
+    let toggle_text = {
+        let text_expanded = text_expanded.clone();
+        Callback::from(move |_: MouseEvent| text_expanded.set(!*text_expanded))
+    };
+    let toggle_notes = {
+        let notes_expanded = notes_expanded.clone();
+        Callback::from(move |_: MouseEvent| notes_expanded.set(!*notes_expanded))
+    };
+    let edit = {
+        let on_edit = props.on_edit.clone();
+        Callback::from(move |_: MouseEvent| on_edit.emit(()))
+    };
+
+    let notes = props
+        .item
+        .notes
+        .as_deref()
+        .map(|n| n.trim())
+        .filter(|n| !n.is_empty());
+
+    html! {
+        <div class="list-header">
+            <div class="list-header-row">
+                <span
+                    class={classes!("list-header-text", (*text_expanded).then_some("expanded"))}
+                    onclick={toggle_text}
+                >
+                    { &props.item.text }
+                </span>
+                <button class="edit-btn" onclick={edit} title="Edit" aria-label="Edit">
+                    { edit_icon() }
+                </button>
+            </div>
+            if let Some(notes) = notes {
+                <p
+                    class={classes!("list-header-notes", (*notes_expanded).then_some("expanded"))}
+                    onclick={toggle_notes}
+                >
+                    { notes }
+                </p>
+            }
+        </div>
     }
 }
 
@@ -925,6 +1036,15 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         Callback::from(move |_: MouseEvent| on_close.emit(()))
     };
 
+    let copy_text = {
+        let text = text.clone();
+        Callback::from(move |_: MouseEvent| {
+            if let Some(window) = web_sys::window() {
+                let _ = window.navigator().clipboard().write_text(&text);
+            }
+        })
+    };
+
     let save = {
         let state = state.clone();
         let id = item.id;
@@ -1019,7 +1139,18 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
             <div class={classes!("editor", (*large_notes).then_some("editor-large"))}>
                 <h2>{ "Edit item" }</h2>
                 <label class="editor-field">
-                    <span>{ "Text" }</span>
+                    <span class="editor-field-label">
+                        { "Text" }
+                        <button
+                            type="button"
+                            class="copy-btn"
+                            onclick={copy_text}
+                            title="Copy text"
+                            aria-label="Copy text"
+                        >
+                            { copy_icon() }
+                        </button>
+                    </span>
                     <input type="text" value={(*text).clone()} oninput={on_text_input} />
                 </label>
                 <label class="editor-field editor-notes-field">

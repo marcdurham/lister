@@ -11,7 +11,7 @@ mod sync;
 
 use components::{
     AdminPage, AuthScreen, Breadcrumbs, Composer, DragHoverTarget, GoogleImportDialog, ItemEditor,
-    ItemRow, ListManager, SessionButton, SettingsMenu, TrashView,
+    ItemRow, ListHeader, ListManager, SessionButton, SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -56,6 +56,7 @@ fn app() -> Html {
     let managing_lists = use_state(|| None::<Uuid>);
     let show_login = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
+    let has_logged_in = use_state(store::has_logged_in);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
     let dragging = use_state(|| None::<Uuid>);
     let hover_membership = use_state(|| None::<Uuid>);
@@ -65,10 +66,15 @@ fn app() -> Html {
     // Resolve the current session once on mount.
     {
         let session = session.clone();
+        let has_logged_in = has_logged_in.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
                 match auth::me().await {
-                    Some(user) => session.set(SessionState::LoggedIn(user)),
+                    Some(user) => {
+                        store::mark_logged_in();
+                        has_logged_in.set(true);
+                        session.set(SessionState::LoggedIn(user));
+                    }
                     None => session.set(SessionState::LoggedOut),
                 }
             });
@@ -95,8 +101,11 @@ fn app() -> Html {
         let session = session.clone();
         let state = state.clone();
         let show_login = show_login.clone();
+        let has_logged_in = has_logged_in.clone();
         Callback::from(move |user: auth::User| {
             store::clear_all();
+            store::mark_logged_in();
+            has_logged_in.set(true);
             state.dispatch(Action::Reload);
             session.set(SessionState::LoggedIn(user));
             show_login.set(false);
@@ -353,6 +362,7 @@ fn app() -> Html {
                     <SessionButton
                         user={user.clone()}
                         online={state.online}
+                        has_logged_in={*has_logged_in}
                         on_login={open_login.clone()}
                         on_logout={logout.clone()}
                     />
@@ -371,6 +381,21 @@ fn app() -> Html {
                 <TrashView state={state.clone()} on_close={close_trash} />
             } else {
                 <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />
+                if let Some(parent_item) = current_parent.and_then(|id| state.items.get(&id).cloned()) {
+                    <ListHeader
+                        item={parent_item.clone()}
+                        on_edit={{
+                            let on_edit = on_edit.clone();
+                            let state = state.clone();
+                            let item_id = parent_item.id;
+                            Callback::from(move |_: ()| {
+                                if let Some(membership_id) = state.any_membership_id(item_id) {
+                                    on_edit.emit((item_id, membership_id));
+                                }
+                            })
+                        }}
+                    />
+                }
                 <div class="composer-bar">
                     <Composer state={state.clone()} parent={current_parent} search={search.clone()} />
                 </div>

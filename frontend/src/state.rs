@@ -51,6 +51,16 @@ impl AppState {
         rows
     }
 
+    /// Any live membership id for this item - used to open the item editor for an item
+    /// reached by its id alone (e.g. the current list's own title), where a specific
+    /// membership isn't already in hand.
+    pub fn any_membership_id(&self, item_id: Uuid) -> Option<Uuid> {
+        self.memberships
+            .values()
+            .find(|m| m.item_id == item_id && m.deleted_at.is_none())
+            .map(|m| m.id)
+    }
+
     /// Count of live (non-deleted) direct children, regardless of visibility.
     pub fn direct_child_count(&self, item_id: Uuid) -> usize {
         self.memberships

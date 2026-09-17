@@ -8,6 +8,7 @@ use uuid::Uuid;
 const ITEMS_KEY: &str = "lister.items";
 const MEMBERSHIPS_KEY: &str = "lister.memberships";
 const CURSOR_KEY: &str = "lister.cursor";
+const HAS_LOGGED_IN_KEY: &str = "lister.has_logged_in";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ItemRecord {
@@ -43,6 +44,17 @@ pub fn get_cursor() -> Option<DateTime<Utc>> {
 
 pub fn set_cursor(cursor: DateTime<Utc>) {
     let _ = LocalStorage::set(CURSOR_KEY, cursor);
+}
+
+/// Whether this browser has ever completed a login/register on this account before -
+/// recorded alongside the cached items so a guest who's never signed in gets a distinct
+/// "cached in browser" status instead of a misleading online/offline reading.
+pub fn has_logged_in() -> bool {
+    LocalStorage::get(HAS_LOGGED_IN_KEY).unwrap_or(false)
+}
+
+pub fn mark_logged_in() {
+    let _ = LocalStorage::set(HAS_LOGGED_IN_KEY, true);
 }
 
 /// Insert/update a single item locally, marking it dirty so the next sync push picks it up.
