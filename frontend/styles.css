@@ -435,12 +435,72 @@ header h1 {
 
 .picker {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
+    flex-direction: column;
+    gap: 0.5rem;
     margin-top: 0.5rem;
+    padding: 0.6rem;
+    background: #f8f9fa;
+    border-radius: 6px;
 }
 
-.picker button {
+.picker-current {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+}
+
+.picker-current-label {
+    color: #9aa5b1;
+}
+
+.picker-current-text {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.picker-search {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.picker-search input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #cbd2d9;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.show-all-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 1px solid #cbd2d9;
+    background: white;
+    color: #616e7c;
+    border-radius: 4px;
+    padding: 0.3rem;
+    cursor: pointer;
+}
+
+.show-all-btn.active {
+    background: #1f6feb;
+    border-color: #1f6feb;
+    color: white;
+}
+
+.picker-results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.picker-results button {
     border: 1px solid #cbd2d9;
     background: white;
     border-radius: 4px;
@@ -543,10 +603,17 @@ header h1 {
 .editor-type {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
     font-size: 0.85rem;
+}
+
+.editor-type-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
 }
 
 .editor-type button,
@@ -633,10 +700,19 @@ header h1 {
         color: #f5f6f8;
         border-color: #52606d;
     }
-    .picker button {
+    .picker {
+        background: #2c3947;
+    }
+    .picker-results button,
+    .picker-search input,
+    .show-all-btn {
         background: #3e4c59;
         border-color: #52606d;
         color: #f5f6f8;
+    }
+    .show-all-btn.active {
+        background: #1f6feb;
+        border-color: #1f6feb;
     }
     .status {
         background: #3e4c59;

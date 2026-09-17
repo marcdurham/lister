@@ -51,10 +51,6 @@ impl AppState {
         rows
     }
 
-    pub fn has_children(&self, item_id: Uuid) -> bool {
-        self.direct_child_count(item_id) > 0
-    }
-
     /// Count of live (non-deleted) direct children, regardless of visibility.
     pub fn direct_child_count(&self, item_id: Uuid) -> usize {
         self.memberships
@@ -151,7 +147,11 @@ pub enum Action {
         remove_children: bool,
     },
     RestoreItem(Uuid),
-    ConvertType(Uuid),
+    SetItemKind {
+        item_id: Uuid,
+        is_note: bool,
+        is_list: bool,
+    },
     UpdateText {
         item_id: Uuid,
         text: String,
@@ -320,11 +320,16 @@ impl Reducible for AppState {
                 }
                 Rc::new(next)
             }
-            Action::ConvertType(item_id) => {
+            Action::SetItemKind {
+                item_id,
+                is_note,
+                is_list,
+            } => {
                 let mut next = (*self).clone();
                 if let Some(item) = next.items.get_mut(&item_id) {
-                    item.is_note = !item.is_note;
-                    if item.is_note {
+                    item.is_note = is_note;
+                    item.is_list = is_list;
+                    if is_note || is_list {
                         item.done = false;
                     }
                     item.updated_at = Utc::now();

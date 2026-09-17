@@ -14,12 +14,13 @@ fn epoch() -> DateTime<Utc> {
 async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result<()> {
     sqlx::query!(
         r#"
-        INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, deleted_at, owner_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO items (id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (id) DO UPDATE SET
             text = EXCLUDED.text,
             notes = EXCLUDED.notes,
             is_note = EXCLUDED.is_note,
+            is_list = EXCLUDED.is_list,
             done = EXCLUDED.done,
             updated_at = EXCLUDED.updated_at,
             deleted_at = EXCLUDED.deleted_at
@@ -29,6 +30,7 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
         item.text,
         item.notes,
         item.is_note,
+        item.is_list,
         item.done,
         item.created_at,
         item.updated_at,
@@ -108,7 +110,7 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
 
     let items = match sqlx::query_as!(
         Item,
-        r#"SELECT id, text, notes, is_note, done, created_at, updated_at, deleted_at
+        r#"SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at
            FROM items WHERE updated_at > $1 AND owner_id = $2"#,
         since,
         owner_id,
@@ -179,12 +181,13 @@ mod tests {
     async fn seed_item(pool: &PgPool, owner_id: Uuid, text: &str) -> Item {
         let item = Item::new(text.into(), false);
         sqlx::query!(
-            "INSERT INTO items (id, text, notes, is_note, done, created_at, updated_at, deleted_at, owner_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO items (id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             item.id,
             item.text,
             item.notes,
             item.is_note,
+            item.is_list,
             item.done,
             item.created_at,
             item.updated_at,

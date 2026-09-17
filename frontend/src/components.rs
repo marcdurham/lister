@@ -71,6 +71,18 @@ fn more_icon() -> Html {
     }
 }
 
+/// Compact "browse all" icon for switching the add-to-list picker from search to navigation.
+fn show_all_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+    }
+}
+
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
 }
@@ -322,7 +334,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let membership = &props.membership;
     let state = props.state.clone();
     let child_count = state.direct_child_count(item.id);
-    let is_list = !item.is_note && child_count > 0;
+    let is_list = !item.is_note && (item.is_list || child_count > 0);
 
     let toggle_done = {
         let state = state.clone();
@@ -333,14 +345,14 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    // Tapping the row opens the sub-list if this item has children, otherwise edits it.
+    // Tapping the row opens the sub-list if this item is (or acts as) a list, otherwise edits it.
     let open_or_edit = {
-        let state = state.clone();
         let on_open = props.on_open.clone();
         let on_edit = props.on_edit.clone();
         let id = item.id;
+        let navigate_in = is_list;
         Callback::from(move |_: MouseEvent| {
-            if state.has_children(id) {
+            if navigate_in {
                 on_open.emit(id);
             } else {
                 on_edit.emit(id);
@@ -579,23 +591,94 @@ pub struct AddToListPickerProps {
 
 #[function_component(AddToListPicker)]
 pub fn add_to_list_picker(props: &AddToListPickerProps) -> Html {
-    let lists = props.state.top_level_lists();
+    let query = use_state(String::new);
+    let show_all = use_state(|| false);
+
     let item_id = props.item_id;
     let state = props.state.clone();
+    let Some(item) = state.items.get(&item_id).cloned() else {
+        return html! {};
+    };
+
+    let on_query_input = {
+        let query = query.clone();
+        let show_all = show_all.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            show_all.set(false);
+            query.set(input.value());
+        })
+    };
+
+    let toggle_show_all = {
+        let show_all = show_all.clone();
+        let query = query.clone();
+        Callback::from(move |_: MouseEvent| {
+            query.set(String::new());
+            show_all.set(!*show_all);
+        })
+    };
+
+    let query_lower = query.trim().to_lowercase();
+    let candidates: Vec<Item> = if *show_all {
+        state.top_level_lists()
+    } else if query_lower.is_empty() {
+        Vec::new()
+    } else {
+        let mut matches: Vec<Item> = state
+            .items
+            .values()
+            .filter(|i| i.deleted_at.is_none())
+            .filter(|i| i.id != item_id)
+            .filter(|i| i.text.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+        matches.sort_by(|a, b| a.text.to_lowercase().cmp(&b.text.to_lowercase()));
+        matches.truncate(20);
+        matches
+    };
 
     html! {
         <div class="picker">
-            { for lists.iter().filter(|l| Some(l.id) != props.current_parent && l.id != item_id).map(|list| {
-                let state = state.clone();
-                let parent = list.id;
-                let onclick = Callback::from(move |_: MouseEvent| {
-                    state.dispatch(Action::AddToList { item_id, parent: Some(parent) });
-                });
-                html! { <button {onclick}>{ &list.text }</button> }
-            }) }
-            if lists.is_empty() {
-                <span class="hint">{ "No other top-level lists yet." }</span>
-            }
+            <div class="picker-current">
+                <span class="picker-current-label">{ "Add to list:" }</span>
+                <span class="picker-current-text">{ &item.text }</span>
+            </div>
+            <div class="picker-search">
+                <input
+                    type="text"
+                    placeholder="Search for a list..."
+                    value={(*query).clone()}
+                    oninput={on_query_input}
+                />
+                <button
+                    class={classes!("show-all-btn", (*show_all).then_some("active"))}
+                    onclick={toggle_show_all}
+                    title="Browse all lists"
+                    aria-label="Browse all lists"
+                >
+                    { show_all_icon() }
+                </button>
+            </div>
+            <div class="picker-results">
+                { for candidates.iter().filter(|l| Some(l.id) != props.current_parent).map(|list| {
+                    let state = state.clone();
+                    let parent = list.id;
+                    let onclick = Callback::from(move |_: MouseEvent| {
+                        state.dispatch(Action::AddToList { item_id, parent: Some(parent) });
+                    });
+                    html! { <button {onclick}>{ &list.text }</button> }
+                }) }
+                if candidates.is_empty() {
+                    if *show_all {
+                        <span class="hint">{ "No other lists yet." }</span>
+                    } else if query_lower.is_empty() {
+                        <span class="hint">{ "Type to search, or tap the icon to browse all lists." }</span>
+                    } else {
+                        <span class="hint">{ "No matches." }</span>
+                    }
+                }
+            </div>
         </div>
     }
 }
@@ -645,10 +728,24 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         })
     };
 
-    let convert = {
+    let convert_to = |is_note: bool, is_list: bool| {
         let state = state.clone();
         let id = item.id;
-        Callback::from(move |_: MouseEvent| state.dispatch(Action::ConvertType(id)))
+        Callback::from(move |_: MouseEvent| {
+            state.dispatch(Action::SetItemKind {
+                item_id: id,
+                is_note,
+                is_list,
+            })
+        })
+    };
+
+    let kind_label = if item.is_note {
+        "note"
+    } else if item.is_list {
+        "list"
+    } else {
+        "task"
     };
 
     html! {
@@ -660,10 +757,18 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                     <input type="text" value={(*text).clone()} oninput={on_text_input} />
                 </label>
                 <div class="editor-type">
-                    <span>{ if item.is_note { "Currently a note" } else { "Currently a task" } }</span>
-                    <button onclick={convert}>
-                        { if item.is_note { "Convert to task" } else { "Convert to note" } }
-                    </button>
+                    <span>{ format!("Currently a {kind_label}") }</span>
+                    <div class="editor-type-actions">
+                        if !item.is_note && !item.is_list {
+                            <button onclick={convert_to(true, false)}>{ "Convert to note" }</button>
+                        }
+                        if !item.is_list {
+                            <button onclick={convert_to(false, true)}>{ "Convert to list" }</button>
+                        }
+                        if item.is_note || item.is_list {
+                            <button onclick={convert_to(false, false)}>{ "Convert to task" }</button>
+                        }
+                    </div>
                 </div>
                 <div class="editor-meta">
                     <div>{ "Created: " }{ format_ts(&item.created_at) }</div>

@@ -8,6 +8,8 @@ pub struct Item {
     pub text: String,
     pub notes: Option<String>,
     pub is_note: bool,
+    #[serde(default)]
+    pub is_list: bool,
     pub done: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -22,6 +24,7 @@ impl Item {
             text,
             notes: None,
             is_note,
+            is_list: false,
             done: false,
             created_at: now,
             updated_at: now,
