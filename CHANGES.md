@@ -14,3 +14,6 @@
 ## 2026-09-17 10:18 PDT
 - The notes field in the item editor now uses a full-sized (1rem) font instead of the
   smaller 0.85rem font it inherited from the old inline notes textarea.
+
+## 2026-09-17 10:20 PDT
+- New items are now added to the top of a list instead of the bottom.

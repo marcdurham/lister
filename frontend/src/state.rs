@@ -178,10 +178,11 @@ impl Reducible for AppState {
                 parent,
             } => {
                 let item = Item::new(text, is_note);
+                // New items go to the top of the list, not the bottom.
                 let next_pos = self
                     .children(parent, true)
-                    .last()
-                    .map(|(_, m)| m.position + 1.0)
+                    .first()
+                    .map(|(_, m)| m.position - 1.0)
                     .unwrap_or(1.0);
                 let membership = Membership::new(item.id, parent, next_pos);
                 store::put_item(item.clone());
