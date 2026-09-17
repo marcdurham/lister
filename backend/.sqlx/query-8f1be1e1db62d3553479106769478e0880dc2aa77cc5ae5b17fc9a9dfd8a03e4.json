@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE items SET owner_id = $1 WHERE owner_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8f1be1e1db62d3553479106769478e0880dc2aa77cc5ae5b17fc9a9dfd8a03e4"
+}
