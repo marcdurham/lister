@@ -61,16 +61,6 @@ fn edit_icon() -> Html {
     }
 }
 
-fn more_icon() -> Html {
-    html! {
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <circle cx="3" cy="8" r="1.3" fill="currentColor"/>
-            <circle cx="8" cy="8" r="1.3" fill="currentColor"/>
-            <circle cx="13" cy="8" r="1.3" fill="currentColor"/>
-        </svg>
-    }
-}
-
 /// Compact "browse all" icon for switching the add-to-list picker from search to navigation.
 fn show_all_icon() -> Html {
     html! {
@@ -318,16 +308,11 @@ pub struct ItemRowProps {
     pub item: Item,
     pub membership: Membership,
     pub on_open: Callback<Uuid>,
-    pub on_edit: Callback<Uuid>,
+    pub on_edit: Callback<(Uuid, Uuid)>,
 }
 
 #[function_component(ItemRow)]
 pub fn item_row(props: &ItemRowProps) -> Html {
-    let expanded = use_state(|| false);
-    let notes_open = use_state(|| false);
-    let picker_open = use_state(|| false);
-    let confirm_remove = use_state(|| false);
-    let remove_children = use_state(|| true);
     let drag_over = use_state(|| false);
 
     let item = &props.item;
@@ -350,92 +335,29 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         let on_open = props.on_open.clone();
         let on_edit = props.on_edit.clone();
         let id = item.id;
+        let membership_id = membership.id;
         let navigate_in = is_list;
         Callback::from(move |_: MouseEvent| {
             if navigate_in {
                 on_open.emit(id);
             } else {
-                on_edit.emit(id);
+                on_edit.emit((id, membership_id));
             }
-        })
-    };
-
-    let toggle_expanded = {
-        let expanded = expanded.clone();
-        Callback::from(move |e: MouseEvent| {
-            e.stop_propagation();
-            expanded.set(!*expanded);
-        })
-    };
-
-    let toggle_notes = {
-        let notes_open = notes_open.clone();
-        Callback::from(move |_: MouseEvent| notes_open.set(!*notes_open))
-    };
-
-    let on_notes_blur = {
-        let state = state.clone();
-        let id = item.id;
-        Callback::from(move |e: FocusEvent| {
-            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
-            state.dispatch(Action::UpdateNotes {
-                item_id: id,
-                notes: input.value(),
-            });
         })
     };
 
     let edit = {
         let on_edit = props.on_edit.clone();
         let id = item.id;
+        let membership_id = membership.id;
         Callback::from(move |e: MouseEvent| {
             e.stop_propagation();
-            on_edit.emit(id);
+            on_edit.emit((id, membership_id));
         })
     };
 
-    let toggle_visible = {
-        let state = state.clone();
-        let id = membership.id;
-        Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleVisible(id)))
-    };
-
-    let open_confirm_remove = {
-        let confirm_remove = confirm_remove.clone();
-        Callback::from(move |_: MouseEvent| confirm_remove.set(true))
-    };
-
-    let cancel_remove = {
-        let confirm_remove = confirm_remove.clone();
-        Callback::from(move |_: MouseEvent| confirm_remove.set(false))
-    };
-
-    let toggle_remove_children = {
-        let remove_children = remove_children.clone();
-        Callback::from(move |_: MouseEvent| remove_children.set(!*remove_children))
-    };
-
-    let confirm_remove_click = {
-        let state = state.clone();
-        let id = item.id;
-        let remove_children = remove_children.clone();
-        let confirm_remove = confirm_remove.clone();
-        Callback::from(move |_: MouseEvent| {
-            state.dispatch(Action::RemoveItem {
-                item_id: id,
-                remove_children: *remove_children,
-            });
-            confirm_remove.set(false);
-        })
-    };
-
-    let toggle_picker = {
-        let picker_open = picker_open.clone();
-        Callback::from(move |_: MouseEvent| picker_open.set(!*picker_open))
-    };
-
-    // Drag-to-reorder: the handle starts the drag, and dropping onto another row swaps
-    // the two items' positions (the same swap the old up/down buttons performed).
+    // Drag-to-reorder: the handle starts the drag, and dropping onto another row moves
+    // the dragged item to sit right before the row it was dropped on.
     let on_drag_start = {
         let id = membership.id;
         Callback::from(move |e: DragEvent| {
@@ -474,16 +396,14 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             };
             if let Ok(dragged_id) = Uuid::parse_str(&dragged) {
                 if dragged_id != id {
-                    state.dispatch(Action::Reorder {
+                    state.dispatch(Action::MoveBefore {
                         membership_id: dragged_id,
-                        swap_with: id,
+                        before_id: id,
                     });
                 }
             }
         })
     };
-
-    let removable_children = state.only_child_descendant_ids(item.id).len();
 
     let notes_preview = item
         .notes
@@ -532,52 +452,10 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 if child_count > 0 {
                     <span class="child-count">{ child_count }</span>
                 }
-                <button class="more-btn" onclick={toggle_expanded} title="More actions" aria-label="More actions">
-                    { more_icon() }
-                </button>
                 <button class="edit-btn" onclick={edit} title="Edit" aria-label="Edit">
                     { edit_icon() }
                 </button>
             </div>
-            if *expanded {
-                <div class="item-actions">
-                    <button onclick={toggle_notes}>{ if item.notes.is_some() { "Notes*" } else { "Notes" } }</button>
-                    <button onclick={toggle_visible}>{ if membership.visible { "Hide" } else { "Show" } }</button>
-                    <button onclick={toggle_picker}>{ "Add to list" }</button>
-                    <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
-                </div>
-                if *notes_open {
-                    <textarea
-                        class="notes"
-                        placeholder="Details..."
-                        onblur={on_notes_blur}
-                        value={item.notes.clone().unwrap_or_default()}
-                    />
-                }
-                if *picker_open {
-                    <AddToListPicker state={state.clone()} item_id={item.id} current_parent={membership.parent_id} />
-                }
-                if *confirm_remove {
-                    <div class="confirm-remove">
-                        <p>
-                            { "Remove \u{201c}" }{ &item.text }{ "\u{201d}?" }
-                            if removable_children > 0 {
-                                { format!(" It has {removable_children} item(s) that only live here.") }
-                            }
-                        </p>
-                        if removable_children > 0 {
-                            <label class="confirm-children">
-                                <input type="checkbox" checked={*remove_children} onclick={toggle_remove_children} />
-                                { format!(" Also remove {removable_children} child item(s)") }
-                            </label>
-                        }
-                        <div class="confirm-actions">
-                            <button class="remove" onclick={confirm_remove_click}>{ "Remove" }</button>
-                            <button onclick={cancel_remove}>{ "Cancel" }</button>
-                        </div>
-                    </div>
-                }
-            }
         </li>
     }
 }
@@ -687,6 +565,7 @@ pub fn add_to_list_picker(props: &AddToListPickerProps) -> Html {
 pub struct ItemEditorProps {
     pub state: UseReducerHandle<AppState>,
     pub item_id: Uuid,
+    pub membership_id: Uuid,
     pub on_close: Callback<()>,
 }
 
@@ -696,13 +575,34 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         return html! {};
     };
     let state = props.state.clone();
+    let membership = state.memberships.get(&props.membership_id).cloned();
+
     let text = use_state(|| item.text.clone());
+    let notes = use_state(|| item.notes.clone().unwrap_or_default());
+    // Once true, the notes field stays large for the rest of this editing session.
+    let large_notes = use_state(|| item.is_note || item.notes.is_some());
+    let picker_open = use_state(|| false);
+    let confirm_remove = use_state(|| false);
+    let remove_children = use_state(|| true);
 
     let on_text_input = {
         let text = text.clone();
         Callback::from(move |e: InputEvent| {
             let input: HtmlInputElement = e.target_unchecked_into();
             text.set(input.value());
+        })
+    };
+
+    let on_notes_input = {
+        let notes = notes.clone();
+        let large_notes = large_notes.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: web_sys::HtmlTextAreaElement = e.target_unchecked_into();
+            let value = input.value();
+            if !value.trim().is_empty() {
+                large_notes.set(true);
+            }
+            notes.set(value);
         })
     };
 
@@ -715,6 +615,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         let state = state.clone();
         let id = item.id;
         let text = text.clone();
+        let notes = notes.clone();
         let on_close = props.on_close.clone();
         Callback::from(move |_: MouseEvent| {
             let trimmed = text.trim().to_string();
@@ -724,6 +625,10 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                     text: trimmed,
                 });
             }
+            state.dispatch(Action::UpdateNotes {
+                item_id: id,
+                notes: (*notes).clone(),
+            });
             on_close.emit(());
         })
     };
@@ -748,13 +653,69 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         "task"
     };
 
+    let membership_visible = membership.as_ref().map(|m| m.visible).unwrap_or(true);
+    let current_parent = membership.as_ref().and_then(|m| m.parent_id);
+
+    let toggle_visible = membership.as_ref().map(|m| {
+        let state = state.clone();
+        let membership_id = m.id;
+        Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleVisible(membership_id)))
+    });
+
+    let toggle_picker = {
+        let picker_open = picker_open.clone();
+        Callback::from(move |_: MouseEvent| picker_open.set(!*picker_open))
+    };
+
+    let open_confirm_remove = {
+        let confirm_remove = confirm_remove.clone();
+        Callback::from(move |_: MouseEvent| confirm_remove.set(true))
+    };
+
+    let cancel_remove = {
+        let confirm_remove = confirm_remove.clone();
+        Callback::from(move |_: MouseEvent| confirm_remove.set(false))
+    };
+
+    let toggle_remove_children = {
+        let remove_children = remove_children.clone();
+        Callback::from(move |_: MouseEvent| remove_children.set(!*remove_children))
+    };
+
+    let confirm_remove_click = {
+        let state = state.clone();
+        let id = item.id;
+        let remove_children = remove_children.clone();
+        let confirm_remove = confirm_remove.clone();
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| {
+            state.dispatch(Action::RemoveItem {
+                item_id: id,
+                remove_children: *remove_children,
+            });
+            confirm_remove.set(false);
+            on_close.emit(());
+        })
+    };
+
+    let removable_children = state.only_child_descendant_ids(item.id).len();
+
     html! {
         <div class="editor-overlay">
-            <div class="editor">
+            <div class={classes!("editor", (*large_notes).then_some("editor-large"))}>
                 <h2>{ "Edit item" }</h2>
                 <label class="editor-field">
                     <span>{ "Text" }</span>
                     <input type="text" value={(*text).clone()} oninput={on_text_input} />
+                </label>
+                <label class="editor-field editor-notes-field">
+                    <span>{ "Notes" }</span>
+                    <textarea
+                        class={classes!("notes", (*large_notes).then_some("notes-large"))}
+                        placeholder="Details..."
+                        oninput={on_notes_input}
+                        value={(*notes).clone()}
+                    />
                 </label>
                 <div class="editor-type">
                     <span>{ format!("Currently a {kind_label}") }</span>
@@ -770,6 +731,38 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                         }
                     </div>
                 </div>
+                <div class="editor-secondary-actions">
+                    if let Some(toggle_visible) = toggle_visible {
+                        <button onclick={toggle_visible}>
+                            { if membership_visible { "Hide" } else { "Show" } }
+                        </button>
+                    }
+                    <button onclick={toggle_picker}>{ "Add to list" }</button>
+                    <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
+                </div>
+                if *picker_open {
+                    <AddToListPicker state={state.clone()} item_id={item.id} current_parent={current_parent} />
+                }
+                if *confirm_remove {
+                    <div class="confirm-remove">
+                        <p>
+                            { "Remove \u{201c}" }{ &item.text }{ "\u{201d}?" }
+                            if removable_children > 0 {
+                                { format!(" It has {removable_children} item(s) that only live here.") }
+                            }
+                        </p>
+                        if removable_children > 0 {
+                            <label class="confirm-children">
+                                <input type="checkbox" checked={*remove_children} onclick={toggle_remove_children} />
+                                { format!(" Also remove {removable_children} child item(s)") }
+                            </label>
+                        }
+                        <div class="confirm-actions">
+                            <button class="remove" onclick={confirm_remove_click}>{ "Remove" }</button>
+                            <button onclick={cancel_remove}>{ "Cancel" }</button>
+                        </div>
+                    </div>
+                }
                 <div class="editor-meta">
                     <div>{ "Created: " }{ format_ts(&item.created_at) }</div>
                     <div>{ "Updated: " }{ format_ts(&item.updated_at) }</div>

@@ -573,6 +573,13 @@ header h1 {
     padding: 1.25rem;
     width: 100%;
     max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+}
+
+.editor.editor-large {
+    max-width: 640px;
 }
 
 .editor h2 {
@@ -616,13 +623,38 @@ header h1 {
     gap: 0.4rem;
 }
 
+.editor-notes-field .notes {
+    min-height: 4rem;
+    transition: min-height 0.15s ease;
+}
+
+.editor-notes-field .notes.notes-large {
+    min-height: 12rem;
+}
+
+.editor.editor-large .editor-notes-field .notes {
+    min-height: 16rem;
+}
+
+.editor-secondary-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
 .editor-type button,
+.editor-secondary-actions button,
 .editor-actions button {
     border: none;
     background: #e4e7eb;
     padding: 0.4rem 0.8rem;
     border-radius: 4px;
     cursor: pointer;
+}
+
+.editor-secondary-actions .remove {
+    color: #c92a2a;
 }
 
 .editor-meta {
@@ -724,6 +756,7 @@ header h1 {
     .trash-header button,
     .confirm-actions button,
     .editor-type button,
+    .editor-secondary-actions button,
     .editor-actions button {
         background: #3e4c59;
         color: #cbd2d9;

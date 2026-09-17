@@ -134,9 +134,10 @@ pub enum Action {
         notes: String,
     },
     ToggleVisible(Uuid),
-    Reorder {
+    /// Move `membership_id` so it sits immediately before `before_id` in the same list.
+    MoveBefore {
         membership_id: Uuid,
-        swap_with: Uuid,
+        before_id: Uuid,
     },
     AddToList {
         item_id: Uuid,
@@ -222,24 +223,37 @@ impl Reducible for AppState {
                 }
                 Rc::new(next)
             }
-            Action::Reorder {
+            Action::MoveBefore {
                 membership_id,
-                swap_with,
+                before_id,
             } => {
                 let mut next = (*self).clone();
-                let a_pos = next.memberships.get(&membership_id).map(|m| m.position);
-                let b_pos = next.memberships.get(&swap_with).map(|m| m.position);
-                if let (Some(a_pos), Some(b_pos)) = (a_pos, b_pos) {
-                    if let Some(m) = next.memberships.get_mut(&membership_id) {
-                        m.position = b_pos;
-                        m.updated_at = Utc::now();
-                        store::put_membership(m.clone());
-                    }
-                    if let Some(m) = next.memberships.get_mut(&swap_with) {
-                        m.position = a_pos;
-                        m.updated_at = Utc::now();
-                        store::put_membership(m.clone());
-                    }
+                if membership_id == before_id {
+                    return Rc::new(next);
+                }
+                let Some(parent) = next.memberships.get(&before_id).map(|m| m.parent_id) else {
+                    return Rc::new(next);
+                };
+                let mut siblings: Vec<&Membership> = next
+                    .memberships
+                    .values()
+                    .filter(|m| {
+                        m.parent_id == parent && m.deleted_at.is_none() && m.id != membership_id
+                    })
+                    .collect();
+                siblings.sort_by(|a, b| a.position.partial_cmp(&b.position).unwrap());
+                let Some(before_idx) = siblings.iter().position(|m| m.id == before_id) else {
+                    return Rc::new(next);
+                };
+                let before_pos = siblings[before_idx].position;
+                let new_position = match before_idx.checked_sub(1) {
+                    Some(prev_idx) => (siblings[prev_idx].position + before_pos) / 2.0,
+                    None => before_pos - 1.0,
+                };
+                if let Some(m) = next.memberships.get_mut(&membership_id) {
+                    m.position = new_position;
+                    m.updated_at = Utc::now();
+                    store::put_membership(m.clone());
                 }
                 Rc::new(next)
             }

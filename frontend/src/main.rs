@@ -32,7 +32,7 @@ fn app() -> Html {
     let state = use_reducer(AppState::load);
     let path = use_state(Vec::<Uuid>::new);
     let show_hidden = use_state(|| false);
-    let editing = use_state(|| None::<Uuid>);
+    let editing = use_state(|| None::<(Uuid, Uuid)>);
     let show_trash = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
@@ -143,7 +143,7 @@ fn app() -> Html {
 
     let on_edit = {
         let editing = editing.clone();
-        Callback::from(move |id: Uuid| editing.set(Some(id)))
+        Callback::from(move |ids: (Uuid, Uuid)| editing.set(Some(ids)))
     };
     let close_editor = {
         let editing = editing.clone();
@@ -237,8 +237,8 @@ fn app() -> Html {
                     <p class="empty">{ "Nothing here yet - add an item above." }</p>
                 }
             }
-            if let Some(id) = *editing {
-                <ItemEditor state={state.clone()} item_id={id} on_close={close_editor} />
+            if let Some((item_id, membership_id)) = *editing {
+                <ItemEditor state={state.clone()} item_id={item_id} membership_id={membership_id} on_close={close_editor} />
             }
         </div>
     }
