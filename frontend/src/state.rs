@@ -136,6 +136,10 @@ impl AppState {
         for (item, _) in self.children(parent, true) {
             out.push_str(&"  ".repeat(depth));
             out.push_str("- ");
+            let is_task = !item.is_note && !item.is_list;
+            if is_task {
+                out.push_str(if item.done { "DONE: " } else { "TODO: " });
+            }
             out.push_str(&item.text);
             out.push('\n');
             self.write_markdown_children(Some(item.id), depth + 1, out);
