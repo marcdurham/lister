@@ -1,0 +1,68 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and Deploy on Docker Host
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets and variables
+        run: |
+          missing=()
+          [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]   && missing+=("SSH_PRIVATE_KEY (secret)")
+          [ -z "${{ secrets.SSH_KNOWN_HOSTS }}" ]   && missing+=("SSH_KNOWN_HOSTS (secret)")
+          [ -z "${{ secrets.POSTGRES_PASSWORD }}" ] && missing+=("POSTGRES_PASSWORD (secret)")
+          [ -z "${{ vars.SSH_USER }}" ]             && missing+=("SSH_USER (variable)")
+          [ -z "${{ vars.DEPLOYMENT_HOST }}" ]      && missing+=("DEPLOYMENT_HOST (variable)")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing required configuration:"
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Copy source to Docker host
+        run: |
+          ssh -o StrictHostKeyChecking=yes "${{ vars.SSH_USER }}@${{ vars.DEPLOYMENT_HOST }}" "mkdir -p ~/lister"
+          rsync -az --delete \
+            -e "ssh -o StrictHostKeyChecking=yes" \
+            --exclude='.git' \
+            --exclude='target' \
+            --exclude='frontend/dist' \
+            ./ "${{ vars.SSH_USER }}@${{ vars.DEPLOYMENT_HOST }}:~/lister/"
+
+      - name: Build and run on Docker host
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI: ${{ vars.GOOGLE_REDIRECT_URI }}
+        run: |
+          ssh -o StrictHostKeyChecking=yes "${{ vars.SSH_USER }}@${{ vars.DEPLOYMENT_HOST }}" \
+            "POSTGRES_PASSWORD='${POSTGRES_PASSWORD}' GOOGLE_CLIENT_ID='${GOOGLE_CLIENT_ID}' GOOGLE_CLIENT_SECRET='${GOOGLE_CLIENT_SECRET}' GOOGLE_REDIRECT_URI='${GOOGLE_REDIRECT_URI}' bash -s" << 'ENDSSH'
+          set -e
+          cd ~/lister
+          docker compose up --build -d --remove-orphans
+          docker image prune -f
+          ENDSSH
