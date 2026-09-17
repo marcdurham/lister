@@ -54,10 +54,9 @@ fn drag_handle_icon() -> Html {
 fn edit_icon() -> Html {
     html! {
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-                d="M11.1 1.6a1.6 1.6 0 0 1 2.3 2.3l-7.9 7.9-3 .7.7-3 7.9-7.9z"
-                fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"
-            />
+            <circle cx="8" cy="3" r="1.3" fill="currentColor"/>
+            <circle cx="8" cy="8" r="1.3" fill="currentColor"/>
+            <circle cx="8" cy="13" r="1.3" fill="currentColor"/>
         </svg>
     }
 }
