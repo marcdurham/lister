@@ -36,24 +36,61 @@ header h1 {
     justify-content: flex-end;
 }
 
-.user-email {
-    max-width: 10rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.8rem;
-    color: #616e7c;
+.session-menu {
+    position: relative;
 }
 
-.logout-btn,
-.login-btn {
-    border: none;
+.session-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 999px;
+    border: 2px solid transparent;
     background: #e4e7eb;
     color: #495057;
-    font-size: 0.8rem;
-    padding: 0.25rem 0.6rem;
-    border-radius: 999px;
     cursor: pointer;
+}
+
+.session-btn.online {
+    border-color: #2b8a3e;
+}
+
+.session-btn.offline {
+    border-color: #f7b32b;
+}
+
+.session-dropdown {
+    min-width: 200px;
+    padding: 0.5rem 0;
+}
+
+.session-status-line {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.8rem 0.5rem;
+    font-size: 0.85rem;
+    color: #495057;
+}
+
+.status-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 999px;
+    background: #f7b32b;
+}
+
+.status-dot.online {
+    background: #2b8a3e;
+}
+
+.session-email {
+    padding: 0 0.8rem 0.4rem;
+    font-size: 0.8rem;
+    color: #616e7c;
+    overflow-wrap: anywhere;
 }
 
 .auth-screen {
@@ -145,24 +182,6 @@ header h1 {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-}
-
-.status {
-    font-size: 0.8rem;
-    padding: 0.2rem 0.6rem;
-    border-radius: 999px;
-    background: #e4e7eb;
-    color: #616e7c;
-}
-
-.status.online {
-    background: #d3f9d8;
-    color: #2b8a3e;
-}
-
-.status.offline {
-    background: #ffe3e3;
-    color: #c92a2a;
 }
 
 .settings-menu {
@@ -271,15 +290,55 @@ header h1 {
     color: #1f2933;
 }
 
+.composer-kind {
+    padding: 0.6rem 0.5rem;
+    border: 1px solid #cbd2d9;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    background: white;
+    color: #1f2933;
+}
+
+.composer-mode-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e4e7eb !important;
+    color: #495057;
+    padding: 0.5rem 0.7rem !important;
+}
+
+.composer-search input {
+    flex: 1;
+}
+
 .composer-bar {
     margin-bottom: 1rem;
+}
+
+.list-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 
 .show-hidden {
     display: block;
     font-size: 0.85rem;
     color: #616e7c;
-    margin-bottom: 0.75rem;
+}
+
+.copy-list-btn {
+    border: none;
+    background: #e4e7eb;
+    color: #495057;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    cursor: pointer;
 }
 
 .items {
@@ -305,6 +364,10 @@ header h1 {
     outline-offset: 2px;
 }
 
+.item.dragging {
+    opacity: 0.5;
+}
+
 .item.up-item {
     cursor: pointer;
     color: #616e7c;
@@ -322,20 +385,40 @@ header h1 {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    cursor: pointer;
+    cursor: grab;
+}
+
+.item-main:active {
+    cursor: grabbing;
 }
 
 .drag-handle {
     display: flex;
     align-items: center;
     color: #9aa5b1;
-    cursor: grab;
     flex-shrink: 0;
-    touch-action: none;
+    pointer-events: none;
 }
 
-.drag-handle:active {
-    cursor: grabbing;
+.nest-target {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: #eef2ff;
+    color: #1f6feb;
+    cursor: pointer;
+    flex-shrink: 0;
+    width: 2.1rem;
+    height: 2.1rem;
+    border-radius: 6px;
+}
+
+.nest-target.drag-over {
+    background: #1f6feb;
+    color: white;
+    outline: 2px dashed #1f6feb;
+    outline-offset: 2px;
 }
 
 .item-title-group {
@@ -798,19 +881,21 @@ header h1 {
         border-color: #52606d;
         color: #f5f6f8;
     }
-    .status {
-        background: #3e4c59;
-        color: #cbd2d9;
-    }
     .trash-btn,
     .child-count,
     .trash-header button,
     .confirm-actions button,
     .editor-type button,
     .editor-secondary-actions button,
-    .editor-actions button {
+    .editor-actions button,
+    .copy-list-btn,
+    .composer-kind,
+    .composer-mode-btn {
         background: #3e4c59;
         color: #cbd2d9;
+    }
+    .composer-kind {
+        border-color: #52606d;
     }
     .confirm-remove {
         background: #3e2a2a;
@@ -835,12 +920,8 @@ header h1 {
     .auth-card h2 {
         color: #cbd2d9;
     }
-    .user-email,
-    .logout-btn {
-        background: transparent;
-        color: #cbd2d9;
-    }
-    .settings-btn {
+    .settings-btn,
+    .session-btn {
         background: #3e4c59;
         color: #cbd2d9;
     }
@@ -853,6 +934,14 @@ header h1 {
     }
     .settings-item:hover {
         background: #3e4c59;
+    }
+    .session-status-line,
+    .session-email {
+        color: #cbd2d9;
+    }
+    .nest-target {
+        background: #2c3947;
+        color: #74a9ff;
     }
     .item-notes-preview {
         color: #9aa5b1;

@@ -10,7 +10,7 @@ mod sync;
 
 use components::{
     AdminPage, AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow,
-    ListManager, SettingsMenu, TrashView,
+    ListManager, SessionButton, SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -56,6 +56,8 @@ fn app() -> Html {
     let show_login = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
     let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
+    let dragging = use_state(|| None::<Uuid>);
+    let search = use_state(|| None::<String>);
 
     // Resolve the current session once on mount.
     {
@@ -105,7 +107,7 @@ fn app() -> Html {
 
     let open_login = {
         let show_login = show_login.clone();
-        Callback::from(move |_: MouseEvent| show_login.set(true))
+        Callback::from(move |_: ()| show_login.set(true))
     };
     let close_login = {
         let show_login = show_login.clone();
@@ -115,7 +117,7 @@ fn app() -> Html {
     let logout = {
         let session = session.clone();
         let state = state.clone();
-        Callback::from(move |_: MouseEvent| {
+        Callback::from(move |_: ()| {
             let session = session.clone();
             let state = state.clone();
             spawn_local(async move {
@@ -157,6 +159,7 @@ fn app() -> Html {
     // back button walks back up the hierarchy one level at a time.
     let navigate = {
         let path = path.clone();
+        let search = search.clone();
         Callback::from(move |new_path: Vec<Uuid>| {
             if let Some(window) = web_sys::window() {
                 if let Ok(history) = window.history() {
@@ -164,6 +167,7 @@ fn app() -> Html {
                 }
             }
             path.set(new_path);
+            search.set(None);
         })
     };
 
@@ -210,6 +214,38 @@ fn app() -> Html {
     let toggle_hidden = {
         let show_hidden = show_hidden.clone();
         Callback::from(move |_: MouseEvent| show_hidden.set(!*show_hidden))
+    };
+
+    let on_drag_start = {
+        let dragging = dragging.clone();
+        Callback::from(move |id: Uuid| dragging.set(Some(id)))
+    };
+    let on_drag_end = {
+        let dragging = dragging.clone();
+        Callback::from(move |_: ()| dragging.set(None))
+    };
+    let on_move_into = {
+        let state = state.clone();
+        let dragging = dragging.clone();
+        Callback::from(move |(membership_id, target_item_id): (Uuid, Uuid)| {
+            dragging.set(None);
+            state.dispatch(Action::MoveInto {
+                membership_id,
+                target_item_id,
+            });
+        })
+    };
+
+    let copy_list = {
+        let state = state.clone();
+        let path = path.clone();
+        Callback::from(move |_: MouseEvent| {
+            let markdown = state.copy_as_markdown(path.last().copied());
+            if let Some(window) = web_sys::window() {
+                let clipboard = window.navigator().clipboard();
+                let _ = clipboard.write_text(&markdown);
+            }
+        })
     };
 
     let on_edit = {
@@ -261,7 +297,13 @@ fn app() -> Html {
     let unsynced_count = if state.online { 0 } else { store::unsynced_count() };
 
     let current_parent = path.last().copied();
-    let rows = state.children(current_parent, *show_hidden);
+    let mut rows = state.children(current_parent, *show_hidden);
+    if let Some(query) = (*search).as_deref() {
+        let query_lower = query.trim().to_lowercase();
+        if !query_lower.is_empty() {
+            rows.retain(|(item, _)| item.text.to_lowercase().contains(&query_lower));
+        }
+    }
 
     if *session == SessionState::Loading {
         return html! { <div class="app auth-screen"><p>{ "Loading..." }</p></div> };
@@ -282,17 +324,8 @@ fn app() -> Html {
                             <span class="child-count">{ trash_count }</span>
                         }
                     </button>
-                    <div class={classes!("status", if state.online { "online" } else { "offline" })}>
-                        { if state.online { "online" } else { "offline" } }
-                        { if !state.online && unsynced_count > 0 {
-                            html! { <span class="unsynced-count">{ unsynced_count }</span> }
-                        } else {
-                            html! {}
-                        }}
-                        { if state.syncing { " · syncing" } else { "" } }
-                    </div>
-                    if let Some(user) = &user {
-                        <span class="user-email">{ &user.email }</span>
+                    if !state.online && unsynced_count > 0 {
+                        <span class="unsynced-count" title="Unsynced changes">{ unsynced_count }</span>
                     }
                     <SettingsMenu
                         state={state.clone()}
@@ -300,11 +333,12 @@ fn app() -> Html {
                         is_logged_in={user.is_some()}
                         on_open_admin={open_admin}
                     />
-                    if user.is_some() {
-                        <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
-                    } else {
-                        <button class="login-btn" onclick={open_login}>{ "Log in" }</button>
-                    }
+                    <SessionButton
+                        user={user.clone()}
+                        online={state.online}
+                        on_login={open_login.clone()}
+                        on_logout={logout.clone()}
+                    />
                 </div>
             </header>
             if let Some(lists) = (*google_import).clone() {
@@ -321,12 +355,15 @@ fn app() -> Html {
             } else {
                 <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />
                 <div class="composer-bar">
-                    <Composer state={state.clone()} parent={current_parent} />
+                    <Composer state={state.clone()} parent={current_parent} search={search.clone()} />
                 </div>
-                <label class="show-hidden">
-                    <input type="checkbox" checked={*show_hidden} onclick={toggle_hidden} />
-                    { " Show hidden items" }
-                </label>
+                <div class="list-toolbar">
+                    <label class="show-hidden">
+                        <input type="checkbox" checked={*show_hidden} onclick={toggle_hidden} />
+                        { " Show hidden items" }
+                    </label>
+                    <button class="copy-list-btn" onclick={copy_list}>{ "Copy list" }</button>
+                </div>
                 <ul class="items">
                     if current_parent.is_some() {
                         <li class="item up-item" onclick={on_go_up}>
@@ -344,6 +381,10 @@ fn app() -> Html {
                                 membership={membership.clone()}
                                 on_open={on_open.clone()}
                                 on_edit={on_edit.clone()}
+                                dragging={*dragging}
+                                on_drag_start={on_drag_start.clone()}
+                                on_drag_end={on_drag_end.clone()}
+                                on_move_into={on_move_into.clone()}
                             />
                         }
                     }) }

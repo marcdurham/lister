@@ -48,3 +48,22 @@
   SVG icon, and made the menu itself visible even when logged out, so a guest can still
   export/import tasks as JSON files without an account. "Import from Google Tasks" stays
   hidden until logged in, since it's tied to a server-side account via OAuth.
+
+## 2026-09-17 12:34 PDT
+- Dragging to reorder now works from anywhere on an item row (not just the six-dot
+  handle) as long as it's not the checkbox or the edit button.
+- While dragging, every other row's edit button turns into a larger chevron "drop to
+  nest" target; dropping onto it moves the dragged item to become a child of that row,
+  turning the target into a list automatically if it wasn't one already.
+- Combined the separate online/offline status pill and login/logout buttons into a
+  single icon button in the header. Its ring is green when online and yellow when
+  offline; the glyph itself differs when someone is signed in. Clicking it opens a
+  small menu with the online/offline text, the signed-in email (if any), and a
+  log in/log out action.
+- The item-type toggle in the composer is now a Note/Task/List dropdown (previously
+  just Note/Task), so a new item can be created as a list directly.
+- Added a compact search toggle next to the composer: it swaps the "Add" box for a
+  live search box that filters the current list by title, with a "+" button to switch
+  back to add mode.
+- Added a "Copy list" button that copies the current list as a markdown bullet list of
+  just the item titles, with children indented under their parents.

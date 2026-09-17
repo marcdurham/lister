@@ -11,6 +11,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Storage", "Window", "Navigator", "Location", "History",
     "Document", "Element", "HtmlElement", "HtmlAnchorElement", "HtmlInputElement",
+    "HtmlSelectElement", "HtmlTextAreaElement", "Clipboard",
     "Blob", "BlobPropertyBag", "Url", "File", "FileList", "FileReader", "Event", "ProgressEvent",
     "DragEvent", "DataTransfer", "PopStateEvent",
 ] }

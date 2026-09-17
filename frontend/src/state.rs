@@ -114,6 +114,24 @@ impl AppState {
         result
     }
 
+    /// Render `root` (or the whole top level, when `root` is `None`) as a markdown list of
+    /// just the item titles, with children indented under their parents.
+    pub fn copy_as_markdown(&self, root: Option<Uuid>) -> String {
+        let mut out = String::new();
+        self.write_markdown_children(root, 0, &mut out);
+        out
+    }
+
+    fn write_markdown_children(&self, parent: Option<Uuid>, depth: usize, out: &mut String) {
+        for (item, _) in self.children(parent, true) {
+            out.push_str(&"  ".repeat(depth));
+            out.push_str("- ");
+            out.push_str(&item.text);
+            out.push('\n');
+            self.write_markdown_children(Some(item.id), depth + 1, out);
+        }
+    }
+
     /// Items currently in the trash, most-recently-removed first.
     pub fn trashed_items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = self
@@ -132,6 +150,7 @@ pub enum Action {
     AddItem {
         text: String,
         is_note: bool,
+        is_list: bool,
         parent: Option<Uuid>,
     },
     ToggleDone(Uuid),
@@ -145,6 +164,12 @@ pub enum Action {
     MoveBefore {
         membership_id: Uuid,
         before_id: Uuid,
+    },
+    /// Move `membership_id` to become a child of `target_item_id`, turning the target
+    /// into a list if it isn't already one.
+    MoveInto {
+        membership_id: Uuid,
+        target_item_id: Uuid,
     },
     AddToList {
         item_id: Uuid,
@@ -182,9 +207,11 @@ impl Reducible for AppState {
             Action::AddItem {
                 text,
                 is_note,
+                is_list,
                 parent,
             } => {
-                let item = Item::new(text, is_note);
+                let mut item = Item::new(text, is_note);
+                item.is_list = is_list;
                 // New items go to the top of the list, not the bottom.
                 let next_pos = self
                     .children(parent, true)
@@ -272,6 +299,41 @@ impl Reducible for AppState {
                     m.position = new_position;
                     m.updated_at = Utc::now();
                     store::put_membership(m.clone());
+                }
+                Rc::new(next)
+            }
+            Action::MoveInto {
+                membership_id,
+                target_item_id,
+            } => {
+                let mut next = (*self).clone();
+                let Some(dragged_item_id) = next.memberships.get(&membership_id).map(|m| m.item_id)
+                else {
+                    return Rc::new(next);
+                };
+                // Refuse to move an item into itself or one of its own descendants.
+                if dragged_item_id == target_item_id
+                    || self.descendant_ids(dragged_item_id).contains(&target_item_id)
+                {
+                    return Rc::new(next);
+                }
+                let next_pos = self
+                    .children(Some(target_item_id), true)
+                    .last()
+                    .map(|(_, m)| m.position + 1.0)
+                    .unwrap_or(1.0);
+                if let Some(m) = next.memberships.get_mut(&membership_id) {
+                    m.parent_id = Some(target_item_id);
+                    m.position = next_pos;
+                    m.updated_at = Utc::now();
+                    store::put_membership(m.clone());
+                }
+                if let Some(target) = next.items.get_mut(&target_item_id) {
+                    if !target.is_list {
+                        target.is_list = true;
+                        target.updated_at = Utc::now();
+                        store::put_item(target.clone());
+                    }
                 }
                 Rc::new(next)
             }

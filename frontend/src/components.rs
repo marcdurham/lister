@@ -71,6 +71,53 @@ fn edit_icon() -> Html {
     }
 }
 
+/// Larger right-pointing chevron shown in place of the edit button while a drag is in
+/// progress - dropping another item onto it nests the dragged item under this one.
+fn chevron_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true">
+            <polyline points="5,2 12,8 5,14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    }
+}
+
+fn search_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <circle cx="6.8" cy="6.8" r="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+    }
+}
+
+fn plus_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+    }
+}
+
+/// Person glyph used on the combined session button; filled when someone is logged in.
+fn person_icon(filled: bool) -> Html {
+    if filled {
+        html! {
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <circle cx="8" cy="5" r="3" fill="currentColor"/>
+                <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="currentColor"/>
+            </svg>
+        }
+    } else {
+        html! {
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <circle cx="8" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="1.3"/>
+            </svg>
+        }
+    }
+}
+
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
 }
@@ -201,17 +248,117 @@ pub fn auth_screen(props: &AuthScreenProps) -> Html {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ItemKind {
+    Note,
+    Task,
+    List,
+}
+
+impl ItemKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            ItemKind::Note => "note",
+            ItemKind::Task => "task",
+            ItemKind::List => "list",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "task" => ItemKind::Task,
+            "list" => ItemKind::List,
+            _ => ItemKind::Note,
+        }
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct SessionButtonProps {
+    pub user: Option<auth::User>,
+    pub online: bool,
+    pub on_login: Callback<()>,
+    pub on_logout: Callback<()>,
+}
+
+/// Combined login/online control: a single icon button whose ring shows online (green)
+/// vs offline (yellow), and whose glyph shows whether anyone is logged in. Clicking it
+/// opens a small menu with the status text, the account email, and a login/logout action.
+#[function_component(SessionButton)]
+pub fn session_button(props: &SessionButtonProps) -> Html {
+    let open = use_state(|| false);
+
+    let toggle = {
+        let open = open.clone();
+        Callback::from(move |_: MouseEvent| open.set(!*open))
+    };
+
+    let login = {
+        let open = open.clone();
+        let on_login = props.on_login.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            on_login.emit(());
+        })
+    };
+
+    let logout = {
+        let open = open.clone();
+        let on_logout = props.on_logout.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            on_logout.emit(());
+        })
+    };
+
+    let btn_class = classes!(
+        "session-btn",
+        if props.online { "online" } else { "offline" }
+    );
+
+    html! {
+        <div class="session-menu">
+            <button
+                class={btn_class}
+                onclick={toggle}
+                title={if props.online { "Online" } else { "Offline" }}
+                aria-label="Account and connection status"
+            >
+                { person_icon(props.user.is_some()) }
+            </button>
+            if *open {
+                <div class="settings-dropdown session-dropdown">
+                    <div class="session-status-line">
+                        <span class={classes!("status-dot", if props.online { "online" } else { "offline" })}></span>
+                        { if props.online { "Online" } else { "Offline" } }
+                    </div>
+                    if let Some(user) = &props.user {
+                        <div class="session-email">{ &user.email }</div>
+                        <button class="settings-item" onclick={logout}>{ "Log out" }</button>
+                    } else {
+                        <button class="settings-item" onclick={login}>{ "Log in" }</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub struct ComposerProps {
     pub state: UseReducerHandle<AppState>,
     pub parent: Option<Uuid>,
+    /// Live search query for the current list; `None` while the composer is in add mode.
+    pub search: UseStateHandle<Option<String>>,
 }
 
 #[function_component(Composer)]
 pub fn composer(props: &ComposerProps) -> Html {
     let draft = use_state(String::new);
-    // Notes are the default item type; the toggle flips it to a task.
-    let is_note = use_state(|| true);
+    // Notes are the default item type.
+    let kind = use_state(|| ItemKind::Note);
+    let search = props.search.clone();
+    let searching = search.is_some();
 
     let on_input = {
         let draft = draft.clone();
@@ -221,9 +368,17 @@ pub fn composer(props: &ComposerProps) -> Html {
         })
     };
 
+    let on_search_input = {
+        let search = search.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            search.set(Some(input.value()));
+        })
+    };
+
     let submit = {
         let draft = draft.clone();
-        let is_note = is_note.clone();
+        let kind = kind.clone();
         let state = props.state.clone();
         let parent = props.parent;
         move || {
@@ -233,7 +388,8 @@ pub fn composer(props: &ComposerProps) -> Html {
             }
             state.dispatch(Action::AddItem {
                 text,
-                is_note: *is_note,
+                is_note: *kind == ItemKind::Note,
+                is_list: *kind == ItemKind::List,
                 parent,
             });
             draft.set(String::new());
@@ -252,29 +408,63 @@ pub fn composer(props: &ComposerProps) -> Html {
             }
         })
     };
-    let toggle_note = {
-        let is_note = is_note.clone();
-        Callback::from(move |_: MouseEvent| is_note.set(!*is_note))
+    let on_kind_change = {
+        let kind = kind.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            kind.set(ItemKind::from_str(&select.value()));
+        })
     };
 
-    html! {
-        <div class="composer">
-            <input
-                type="text"
-                placeholder={if *is_note { "Add a note..." } else { "Add a task..." }}
-                value={(*draft).clone()}
-                oninput={on_input}
-                {onkeypress}
-            />
-            <button
-                class={if *is_note { "toggle task" } else { "toggle task active" }}
-                onclick={toggle_note}
-                title="Toggle note vs task"
-            >
-                { if *is_note { "Task" } else { "Note" } }
-            </button>
-            <button {onclick}>{ "Add" }</button>
-        </div>
+    let enter_search = {
+        let search = search.clone();
+        Callback::from(move |_: MouseEvent| search.set(Some(String::new())))
+    };
+    let exit_search = {
+        let search = search.clone();
+        Callback::from(move |_: MouseEvent| search.set(None))
+    };
+
+    if searching {
+        let query = (*search).clone().unwrap_or_default();
+        html! {
+            <div class="composer composer-search">
+                <input
+                    type="text"
+                    placeholder="Search this list..."
+                    value={query}
+                    oninput={on_search_input}
+                />
+                <button class="composer-mode-btn" onclick={exit_search} title="Back to add">
+                    { plus_icon() }
+                </button>
+            </div>
+        }
+    } else {
+        html! {
+            <div class="composer">
+                <input
+                    type="text"
+                    placeholder={match *kind {
+                        ItemKind::Note => "Add a note...",
+                        ItemKind::Task => "Add a task...",
+                        ItemKind::List => "Add a list...",
+                    }}
+                    value={(*draft).clone()}
+                    oninput={on_input}
+                    {onkeypress}
+                />
+                <select class="composer-kind" onchange={on_kind_change} value={kind.as_str()}>
+                    <option value="note" selected={*kind == ItemKind::Note}>{ "Note" }</option>
+                    <option value="task" selected={*kind == ItemKind::Task}>{ "Task" }</option>
+                    <option value="list" selected={*kind == ItemKind::List}>{ "List" }</option>
+                </select>
+                <button {onclick}>{ "Add" }</button>
+                <button class="composer-mode-btn" onclick={enter_search} title="Search this list">
+                    { search_icon() }
+                </button>
+            </div>
+        }
     }
 }
 
@@ -319,17 +509,27 @@ pub struct ItemRowProps {
     pub membership: Membership,
     pub on_open: Callback<Uuid>,
     pub on_edit: Callback<(Uuid, Uuid)>,
+    /// Membership id of the item currently being dragged, shared across all rows so each
+    /// one can switch its far-right control to a "drop to nest" chevron.
+    pub dragging: Option<Uuid>,
+    pub on_drag_start: Callback<Uuid>,
+    pub on_drag_end: Callback<()>,
+    /// (dragged membership id, target item id) - dropped onto another row's chevron.
+    pub on_move_into: Callback<(Uuid, Uuid)>,
 }
 
 #[function_component(ItemRow)]
 pub fn item_row(props: &ItemRowProps) -> Html {
     let drag_over = use_state(|| false);
+    let chevron_drag_over = use_state(|| false);
 
     let item = &props.item;
     let membership = &props.membership;
     let state = props.state.clone();
     let child_count = state.direct_child_count(item.id);
     let is_list = !item.is_note && (item.is_list || child_count > 0);
+    let is_dragging_this = props.dragging == Some(membership.id);
+    let drag_active = props.dragging.is_some();
 
     let toggle_done = {
         let state = state.clone();
@@ -366,19 +566,29 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    // Drag-to-reorder: the handle starts the drag, and dropping onto another row moves
-    // the dragged item to sit right before the row it was dropped on.
+    // Drag-to-reorder: any part of the row (other than the checkbox/buttons) starts the
+    // drag, and dropping onto another row moves the dragged item to sit right before it.
     let on_drag_start = {
         let id = membership.id;
+        let on_drag_start = props.on_drag_start.clone();
         Callback::from(move |e: DragEvent| {
             if let Some(dt) = e.data_transfer() {
                 let _ = dt.set_data("text/plain", &id.to_string());
                 dt.set_effect_allowed("move");
             }
+            on_drag_start.emit(id);
         })
     };
 
-    let on_handle_click = Callback::from(|e: MouseEvent| e.stop_propagation());
+    let on_drag_end = {
+        let on_drag_end = props.on_drag_end.clone();
+        Callback::from(move |_: DragEvent| on_drag_end.emit(()))
+    };
+
+    let no_drag_start = Callback::from(|e: DragEvent| {
+        e.prevent_default();
+        e.stop_propagation();
+    });
 
     let on_drag_over = {
         let drag_over = drag_over.clone();
@@ -415,6 +625,41 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
+    // Dropping onto the chevron nests the dragged item under this one instead of
+    // reordering past it.
+    let on_chevron_drag_over = {
+        let chevron_drag_over = chevron_drag_over.clone();
+        Callback::from(move |e: DragEvent| {
+            e.prevent_default();
+            e.stop_propagation();
+            chevron_drag_over.set(true);
+        })
+    };
+    let on_chevron_drag_leave = {
+        let chevron_drag_over = chevron_drag_over.clone();
+        Callback::from(move |e: DragEvent| {
+            e.stop_propagation();
+            chevron_drag_over.set(false);
+        })
+    };
+    let on_chevron_drop = {
+        let chevron_drag_over = chevron_drag_over.clone();
+        let on_move_into = props.on_move_into.clone();
+        let target_item_id = item.id;
+        Callback::from(move |e: DragEvent| {
+            e.prevent_default();
+            e.stop_propagation();
+            chevron_drag_over.set(false);
+            let Some(dt) = e.data_transfer() else { return };
+            let Ok(dragged) = dt.get_data("text/plain") else {
+                return;
+            };
+            if let Ok(dragged_id) = Uuid::parse_str(&dragged) {
+                on_move_into.emit((dragged_id, target_item_id));
+            }
+        })
+    };
+
     let notes_preview = item
         .notes
         .as_deref()
@@ -426,7 +671,8 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         "item",
         item.done.then_some("done"),
         (!membership.visible).then_some("hidden-row"),
-        (*drag_over).then_some("drag-over")
+        (*drag_over).then_some("drag-over"),
+        is_dragging_this.then_some("dragging")
     );
 
     html! {
@@ -436,22 +682,26 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             ondragleave={on_drag_leave}
             ondrop={on_drop}
         >
-            <div class="item-main" onclick={open_or_edit}>
-                <span
-                    class="drag-handle"
-                    draggable="true"
-                    ondragstart={on_drag_start}
-                    onclick={on_handle_click}
-                    title="Drag to reorder"
-                >
-                    { drag_handle_icon() }
-                </span>
+            <div
+                class="item-main"
+                onclick={open_or_edit}
+                draggable="true"
+                ondragstart={on_drag_start}
+                ondragend={on_drag_end}
+            >
+                <span class="drag-handle" aria-hidden="true">{ drag_handle_icon() }</span>
                 if item.is_note {
                     { note_icon() }
                 } else if is_list {
                     { list_icon() }
                 } else {
-                    <input type="checkbox" checked={item.done} onclick={toggle_done} />
+                    <input
+                        type="checkbox"
+                        checked={item.done}
+                        draggable="false"
+                        onclick={toggle_done}
+                        ondragstart={no_drag_start.clone()}
+                    />
                 }
                 <div class="item-title-group">
                     <span class="item-text">{ &item.text }</span>
@@ -462,9 +712,28 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 if child_count > 0 {
                     <span class="child-count">{ child_count }</span>
                 }
-                <button class="edit-btn" onclick={edit} title="Edit" aria-label="Edit">
-                    { edit_icon() }
-                </button>
+                if drag_active && !is_dragging_this {
+                    <span
+                        class={classes!("nest-target", (*chevron_drag_over).then_some("drag-over"))}
+                        title="Drop to move inside"
+                        ondragover={on_chevron_drag_over}
+                        ondragleave={on_chevron_drag_leave}
+                        ondrop={on_chevron_drop}
+                    >
+                        { chevron_icon() }
+                    </span>
+                } else {
+                    <button
+                        class="edit-btn"
+                        onclick={edit}
+                        draggable="false"
+                        ondragstart={no_drag_start}
+                        title="Edit"
+                        aria-label="Edit"
+                    >
+                        { edit_icon() }
+                    </button>
+                }
             </div>
         </li>
     }
