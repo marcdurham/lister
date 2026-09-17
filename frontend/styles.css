@@ -653,4 +653,18 @@ header h1 {
         background: transparent;
         color: #cbd2d9;
     }
+    .settings-btn {
+        background: #3e4c59;
+        color: #cbd2d9;
+    }
+    .settings-dropdown {
+        background: #323f4b;
+        border-color: #52606d;
+    }
+    .settings-item {
+        color: #f5f6f8;
+    }
+    .settings-item:hover {
+        background: #3e4c59;
+    }
 }
