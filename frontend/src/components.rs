@@ -2,6 +2,7 @@ use crate::admin;
 use crate::auth;
 use crate::backup;
 use crate::google::{self, ImportedTaskList};
+use crate::markdown;
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
 use gloo_timers::callback::Timeout;
@@ -1582,6 +1583,7 @@ pub struct SettingsMenuProps {
 pub fn settings_menu(props: &SettingsMenuProps) -> Html {
     let open = use_state(|| false);
     let file_input_ref = use_node_ref();
+    let markdown_input_ref = use_node_ref();
 
     let toggle = {
         let open = open.clone();
@@ -1626,6 +1628,58 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
             if let Some(input) = file_input_ref.cast::<HtmlInputElement>() {
                 input.click();
             }
+        })
+    };
+
+    let choose_import_markdown = {
+        let open = open.clone();
+        let markdown_input_ref = markdown_input_ref.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            if let Some(input) = markdown_input_ref.cast::<HtmlInputElement>() {
+                input.click();
+            }
+        })
+    };
+
+    let on_markdown_file_change = {
+        let state = props.state.clone();
+        Callback::from(move |e: Event| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            let Some(file) = input.files().and_then(|list| list.get(0)) else {
+                return;
+            };
+            input.set_value("");
+
+            let state = state.clone();
+            let Ok(reader) = FileReader::new() else {
+                return;
+            };
+            let reader_for_load = reader.clone();
+            let onload = Closure::once(move |_: Event| {
+                let Ok(result) = reader_for_load.result() else {
+                    return;
+                };
+                let Some(text) = result.as_string() else {
+                    return;
+                };
+                let import = markdown::parse_markdown(&text);
+                if import.items.is_empty() {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.alert_with_message(
+                            "No headings or list items were found in that markdown file.",
+                        );
+                    }
+                    return;
+                }
+                state.dispatch(Action::ImportMarkdown {
+                    items: import.items,
+                    memberships: import.memberships,
+                });
+            });
+            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+            onload.forget();
+            let _ = reader.read_as_text(&file);
         })
     };
 
@@ -1699,6 +1753,9 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                     <button class="settings-item" onclick={choose_import_file}>
                         { "Import tasks (JSON)" }
                     </button>
+                    <button class="settings-item" onclick={choose_import_markdown}>
+                        { "Import markdown (.md)" }
+                    </button>
                     if props.is_admin {
                         <button class="settings-item" onclick={open_admin}>
                             { "Admin" }
@@ -1711,6 +1768,13 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                 accept="application/json"
                 ref={file_input_ref}
                 onchange={on_file_change}
+                style="display: none;"
+            />
+            <input
+                type="file"
+                accept=".md,text/markdown"
+                ref={markdown_input_ref}
+                onchange={on_markdown_file_change}
                 style="display: none;"
             />
         </div>

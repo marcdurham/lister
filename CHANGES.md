@@ -83,3 +83,18 @@
   hold-to-arm never actually fired. Switched the drag tracker to `use_mut_ref`
   (real shared `Rc<RefCell<_>>` state) so it's read live from every closure, including
   the delayed timer.
+
+## 2026-09-17 13:50 PDT
+- Item rows are no longer text-selectable (`user-select: none` on `.item`), so a
+  press-and-hold or drag no longer risks highlighting text instead of reordering; the
+  item editor's text/notes fields are unaffected and remain selectable as normal.
+- Added "Import markdown (.md)" to the menu. Headings become parent list items (a
+  sub-heading nests under the nearest shallower heading); bullet/numbered list items
+  become children, nested by indentation, under the enclosing list item or heading;
+  any other text under a heading becomes that heading's notes. A line starting with
+  `TODO:` imports as an unchecked task and `DONE:` as a checked one; a heading or list
+  item that is *only* `TODO`/`TODO:` isn't a task itself, but everything nested under
+  it defaults to being one. New items are added as new top-level lists, after whatever
+  already exists. Added unit tests in `frontend/src/markdown.rs` covering heading
+  nesting, indentation nesting, notes collection, and the TODO/DONE rules (run via
+  `cargo test -p frontend --bin frontend`, since the crate has no `[lib]` target).

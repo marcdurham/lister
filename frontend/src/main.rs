@@ -3,6 +3,7 @@ mod auth;
 mod backup;
 mod components;
 mod google;
+mod markdown;
 mod model;
 mod state;
 mod store;

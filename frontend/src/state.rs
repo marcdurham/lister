@@ -192,6 +192,12 @@ pub enum Action {
     SetOnline(bool),
     SetSyncing(bool),
     ImportGoogleTasks(Vec<crate::google::ImportedTaskList>),
+    /// Adds a parsed markdown import's items/memberships as new top-level roots,
+    /// appended after whatever top-level items already exist.
+    ImportMarkdown {
+        items: Vec<Item>,
+        memberships: Vec<Membership>,
+    },
     ImportJson {
         items: Vec<Item>,
         memberships: Vec<Membership>,
@@ -477,6 +483,31 @@ impl Reducible for AppState {
                         next.items.insert(item.id, item);
                         next.memberships.insert(membership.id, membership);
                     }
+                }
+                Rc::new(next)
+            }
+            Action::ImportMarkdown { items, memberships } => {
+                let mut next = (*self).clone();
+                // Offset the parsed roots' positions so they land after whatever
+                // top-level items already exist, instead of interleaving with them.
+                let offset = next
+                    .children(None, true)
+                    .last()
+                    .map(|(_, m)| m.position)
+                    .unwrap_or(0.0);
+                for item in &items {
+                    store::put_item(item.clone());
+                }
+                for membership in memberships {
+                    let mut membership = membership;
+                    if membership.parent_id.is_none() {
+                        membership.position += offset;
+                    }
+                    store::put_membership(membership.clone());
+                    next.memberships.insert(membership.id, membership);
+                }
+                for item in items {
+                    next.items.insert(item.id, item);
                 }
                 Rc::new(next)
             }
