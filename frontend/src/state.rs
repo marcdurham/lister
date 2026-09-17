@@ -158,6 +158,7 @@ pub enum Action {
     },
     SetOnline(bool),
     SetSyncing(bool),
+    ImportGoogleTasks(Vec<crate::google::ImportedTaskList>),
 }
 
 impl Reducible for AppState {
@@ -344,6 +345,36 @@ impl Reducible for AppState {
             Action::SetSyncing(syncing) => {
                 let mut next = (*self).clone();
                 next.syncing = syncing;
+                Rc::new(next)
+            }
+            Action::ImportGoogleTasks(lists) => {
+                let mut next = (*self).clone();
+                for list in lists {
+                    let list_item = Item::new(list.title, false);
+                    let list_pos = next
+                        .children(None, true)
+                        .last()
+                        .map(|(_, m)| m.position + 1.0)
+                        .unwrap_or(1.0);
+                    let list_membership = Membership::new(list_item.id, None, list_pos);
+                    store::put_item(list_item.clone());
+                    store::put_membership(list_membership.clone());
+                    next.items.insert(list_item.id, list_item.clone());
+                    next.memberships
+                        .insert(list_membership.id, list_membership);
+
+                    for (pos, task) in list.tasks.into_iter().enumerate() {
+                        let mut item = Item::new(task.title, false);
+                        item.notes = task.notes;
+                        item.done = task.done;
+                        let membership =
+                            Membership::new(item.id, Some(list_item.id), (pos + 1) as f64);
+                        store::put_item(item.clone());
+                        store::put_membership(membership.clone());
+                        next.items.insert(item.id, item);
+                        next.memberships.insert(membership.id, membership);
+                    }
+                }
                 Rc::new(next)
             }
         }

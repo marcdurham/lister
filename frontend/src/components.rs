@@ -1,6 +1,8 @@
 use crate::auth;
+use crate::google::{self, ImportedTaskList};
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
+use std::collections::HashSet;
 use uuid::Uuid;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlInputElement;
@@ -606,6 +608,116 @@ pub fn trash_view(props: &TrashViewProps) -> Html {
                     }
                 }) }
             </ul>
+        </div>
+    }
+}
+
+#[function_component(SettingsMenu)]
+pub fn settings_menu() -> Html {
+    let open = use_state(|| false);
+
+    let toggle = {
+        let open = open.clone();
+        Callback::from(move |_: MouseEvent| open.set(!*open))
+    };
+
+    let import_google = {
+        let open = open.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            google::start_connect();
+        })
+    };
+
+    html! {
+        <div class="settings-menu">
+            <button class="settings-btn" onclick={toggle} title="Settings" aria-label="Settings">
+                { "⚙" }
+            </button>
+            if *open {
+                <div class="settings-dropdown">
+                    <button class="settings-item" onclick={import_google}>
+                        { "Import from Google Tasks" }
+                    </button>
+                </div>
+            }
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct GoogleImportDialogProps {
+    pub state: UseReducerHandle<AppState>,
+    pub lists: Vec<ImportedTaskList>,
+    pub on_close: Callback<()>,
+}
+
+#[function_component(GoogleImportDialog)]
+pub fn google_import_dialog(props: &GoogleImportDialogProps) -> Html {
+    let selected = use_state(|| (0..props.lists.len()).collect::<HashSet<usize>>());
+
+    let close = {
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| on_close.emit(()))
+    };
+
+    let import = {
+        let state = props.state.clone();
+        let lists = props.lists.clone();
+        let selected = selected.clone();
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| {
+            let chosen: Vec<ImportedTaskList> = lists
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| selected.contains(idx))
+                .map(|(_, l)| l.clone())
+                .collect();
+            if !chosen.is_empty() {
+                state.dispatch(Action::ImportGoogleTasks(chosen));
+            }
+            on_close.emit(());
+        })
+    };
+
+    html! {
+        <div class="editor-overlay">
+            <div class="editor">
+                <h2>{ "Import from Google Tasks" }</h2>
+                if props.lists.is_empty() {
+                    <p>{ "No Google task lists were found for this account." }</p>
+                } else {
+                    <ul class="google-import-lists">
+                        { for props.lists.iter().enumerate().map(|(idx, list)| {
+                            let is_checked = selected.contains(&idx);
+                            let selected = selected.clone();
+                            let onclick = Callback::from(move |_: MouseEvent| {
+                                let mut next = (*selected).clone();
+                                if next.contains(&idx) {
+                                    next.remove(&idx);
+                                } else {
+                                    next.insert(idx);
+                                }
+                                selected.set(next);
+                            });
+                            html! {
+                                <li>
+                                    <label>
+                                        <input type="checkbox" checked={is_checked} {onclick} />
+                                        { format!(" {} ({} tasks)", list.title, list.tasks.len()) }
+                                    </label>
+                                </li>
+                            }
+                        }) }
+                    </ul>
+                }
+                <div class="editor-actions">
+                    if !props.lists.is_empty() {
+                        <button onclick={import}>{ "Import selected" }</button>
+                    }
+                    <button onclick={close}>{ "Cancel" }</button>
+                </div>
+            </div>
         </div>
     }
 }

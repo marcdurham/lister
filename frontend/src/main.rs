@@ -1,11 +1,15 @@
 mod auth;
 mod components;
+mod google;
 mod model;
 mod state;
 mod store;
 mod sync;
 
-use components::{AuthScreen, Breadcrumbs, Composer, ItemEditor, ItemRow, TrashView};
+use components::{
+    AuthScreen, Breadcrumbs, Composer, GoogleImportDialog, ItemEditor, ItemRow, SettingsMenu,
+    TrashView,
+};
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
 use state::{Action, AppState};
@@ -30,6 +34,7 @@ fn app() -> Html {
     let editing = use_state(|| None::<Uuid>);
     let show_trash = use_state(|| false);
     let session = use_state(|| SessionState::Loading);
+    let google_import = use_state(|| None::<Vec<google::ImportedTaskList>>);
 
     // Resolve the current session once on mount.
     {
@@ -41,6 +46,21 @@ fn app() -> Html {
                     None => session.set(SessionState::LoggedOut),
                 }
             });
+            || ()
+        });
+    }
+
+    // Pick up an in-progress Google Tasks import once we're back from the OAuth redirect.
+    {
+        let google_import = google_import.clone();
+        use_effect_with((), move |_| {
+            if google::returned_from_google() {
+                google::clear_return_marker();
+                spawn_local(async move {
+                    let lists = google::fetch_imported_tasks().await;
+                    google_import.set(Some(lists));
+                });
+            }
             || ()
         });
     }
@@ -138,6 +158,11 @@ fn app() -> Html {
         Callback::from(move |_: ()| show_trash.set(false))
     };
 
+    let close_google_import = {
+        let google_import = google_import.clone();
+        Callback::from(move |_: ()| google_import.set(None))
+    };
+
     let trash_count = state.trashed_items().len();
     let unsynced_count = if state.online { 0 } else { store::unsynced_count() };
 
@@ -176,9 +201,13 @@ fn app() -> Html {
                         { if state.syncing { " · syncing" } else { "" } }
                     </div>
                     <span class="user-email">{ &user.email }</span>
+                    <SettingsMenu />
                     <button class="logout-btn" onclick={logout}>{ "Log out" }</button>
                 </div>
             </header>
+            if let Some(lists) = (*google_import).clone() {
+                <GoogleImportDialog state={state.clone()} lists={lists} on_close={close_google_import} />
+            }
             if *show_trash {
                 <TrashView state={state.clone()} on_close={close_trash} />
             } else {

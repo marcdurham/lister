@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod db;
+mod google;
 
 use actix_files::{Files, NamedFile};
 use actix_web::{get, web, App, HttpServer, Responder};
@@ -29,15 +30,21 @@ async fn main() -> std::io::Result<()> {
 
     let pool = db::connect().await;
 
+    let google_cache = web::Data::new(google::GoogleImportCache::default());
+
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(google_cache.clone())
             .service(health)
             .service(api::sync)
             .service(auth::register)
             .service(auth::login)
             .service(auth::logout)
             .service(auth::me)
+            .service(google::connect)
+            .service(google::callback)
+            .service(google::imported_tasks)
             .service(Files::new("/", dist_dir()).index_file("index.html"))
             .default_service(actix_web::web::route().to(spa_fallback))
     })

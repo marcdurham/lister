@@ -21,6 +21,11 @@ services:
     environment:
       DATABASE_URL: postgres://lister:change-me@postgres/lister
       LISTER_BIND: 0.0.0.0:8080
+      # Set these to enable "Import from Google Tasks" (create an OAuth client at
+      # console.cloud.google.com/apis/credentials and register the redirect URI below).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8400/api/google/callback}
     ports:
       - "8400:8080"
 

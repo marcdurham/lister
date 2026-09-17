@@ -7,7 +7,7 @@ edition = "2021"
 yew = { version = "0.21", features = ["csr"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Storage", "Window", "Navigator"] }
+web-sys = { version = "0.3", features = ["Storage", "Window", "Navigator", "Location", "History"] }
 gloo-storage = "0.3"
 gloo-net = "0.6"
 gloo-timers = { version = "0.3", features = ["futures"] }
