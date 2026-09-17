@@ -631,6 +631,7 @@ header h1 {
 
 .editor-notes-field .notes {
     min-height: 4rem;
+    font-size: 1rem;
     transition: min-height 0.15s ease;
 }
 
