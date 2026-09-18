@@ -313,9 +313,21 @@ header {
 }
 
 /* While an item is being dragged, each breadcrumb becomes a valid drop target so the
-   item can be nested onto any ancestor list, not just the one currently open. */
+   item can be nested onto any ancestor list, not just the one currently open. Breadcrumb
+   links reuse the same `.nest-target` marker class the row-level drop chevron uses (so
+   the shared drag-detection code picks them up via `.closest(".nest-target")`), so every
+   property that class sets for the chevron's absolutely-positioned overlay has to be
+   reset back to plain inline-link layout here. */
 .breadcrumbs a.nest-target {
+    position: static;
+    top: auto;
+    right: auto;
+    bottom: auto;
+    width: auto;
+    display: inline;
     padding: 0.15rem 0.45rem;
+    background: none;
+    color: #1f6feb;
     border-radius: 999px;
     outline: 1px dashed #1f6feb;
     outline-offset: 1px;
