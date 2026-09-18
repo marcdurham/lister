@@ -281,6 +281,10 @@ pub enum Action {
         membership_id: Uuid,
         target_item_id: Uuid,
     },
+    /// Move `membership_id` out of every ancestor, making it a top-level list.
+    MoveToRoot {
+        membership_id: Uuid,
+    },
     AddToList {
         item_id: Uuid,
         parent: Option<Uuid>,
@@ -509,6 +513,23 @@ impl Reducible for AppState {
                         target.updated_at = Utc::now();
                         store::put_item(target.clone());
                     }
+                }
+                Rc::new(next)
+            }
+            Action::MoveToRoot { membership_id } => {
+                let mut next = (*self).clone();
+                let next_pos = self
+                    .children(None, true)
+                    .into_iter()
+                    .filter(|(_, m)| m.id != membership_id)
+                    .last()
+                    .map(|(_, m)| m.position + 1.0)
+                    .unwrap_or(1.0);
+                if let Some(m) = next.memberships.get_mut(&membership_id) {
+                    m.parent_id = None;
+                    m.position = next_pos;
+                    m.updated_at = Utc::now();
+                    store::put_membership(m.clone());
                 }
                 Rc::new(next)
             }

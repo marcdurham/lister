@@ -754,6 +754,10 @@ pub struct BreadcrumbsProps {
     /// rows so the hovered breadcrumb can highlight.
     #[prop_or_default]
     pub hover_nest_item: Option<Uuid>,
+    /// Whether the drag is currently hovering the "Lists" breadcrumb, to pull the item out
+    /// to the top level.
+    #[prop_or_default]
+    pub hover_root: bool,
 }
 
 #[function_component(Breadcrumbs)]
@@ -763,9 +767,15 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
         Callback::from(move |_: MouseEvent| on_navigate.emit(vec![]))
     };
 
+    let home_class = classes!(
+        props.dragging.then_some("nest-target"),
+        props.hover_root.then_some("drag-over")
+    );
+    let home_drop_root = props.dragging.then_some("true");
+
     html! {
         <nav class="breadcrumbs">
-            <a onclick={home}>{ "Lists" }</a>
+            <a class={home_class} onclick={home} data-drop-root={home_drop_root}>{ "Lists" }</a>
             { for props.path.iter().enumerate().map(|(idx, id)| {
                 let name = props.state.items.get(id).map(|i| i.text.clone()).unwrap_or_default();
                 let path = props.path.clone();
@@ -790,13 +800,15 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
 }
 
 /// What's currently under the pointer while dragging an item: another row (to reorder
-/// before), that row's chevron (to nest inside it), or the gap after the last row (to
-/// move to the end of the list).
+/// before), that row's chevron (to nest inside it), the gap after the last row (to move
+/// to the end of the list), a breadcrumb (to nest inside that ancestor list), or the
+/// "Lists" breadcrumb (to pull it out to the top level).
 #[derive(Clone, Copy, PartialEq)]
 pub enum DragHoverTarget {
     Reorder(Uuid),
     Nest(Uuid),
     End,
+    Root,
 }
 
 /// Distance (px) from the top/bottom of the viewport within which an active drag
@@ -864,6 +876,9 @@ fn hover_target_at(x: f64, y: f64, dragged_membership_id: Uuid) -> Option<DragHo
     let doc = web_sys::window()?.document()?;
     if let Some(el) = doc.element_from_point(x as f32, y as f32) {
         if let Ok(Some(nest)) = el.closest(".nest-target") {
+            if nest.has_attribute("data-drop-root") {
+                return Some(DragHoverTarget::Root);
+            }
             if let Some(item_id) = nest
                 .get_attribute("data-drop-item")
                 .and_then(|id| Uuid::parse_str(&id).ok())
@@ -1266,6 +1281,9 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                     }
                     Some(DragHoverTarget::End) => {
                         state.dispatch(Action::MoveToEnd { membership_id });
+                    }
+                    Some(DragHoverTarget::Root) => {
+                        state.dispatch(Action::MoveToRoot { membership_id });
                     }
                     None => {}
                 }

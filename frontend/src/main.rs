@@ -76,6 +76,7 @@ fn app() -> Html {
     let hover_membership = use_state(|| None::<Uuid>);
     let hover_nest_item = use_state(|| None::<Uuid>);
     let hover_end = use_state(|| false);
+    let hover_root = use_state(|| false);
     let search = use_state(|| None::<String>);
 
     // Resolve the current session once on mount.
@@ -265,26 +266,37 @@ fn app() -> Html {
         let hover_membership = hover_membership.clone();
         let hover_nest_item = hover_nest_item.clone();
         let hover_end = hover_end.clone();
+        let hover_root = hover_root.clone();
         Callback::from(move |target: Option<DragHoverTarget>| match target {
             Some(DragHoverTarget::Reorder(id)) => {
                 hover_membership.set(Some(id));
                 hover_nest_item.set(None);
                 hover_end.set(false);
+                hover_root.set(false);
             }
             Some(DragHoverTarget::Nest(id)) => {
                 hover_membership.set(None);
                 hover_nest_item.set(Some(id));
                 hover_end.set(false);
+                hover_root.set(false);
             }
             Some(DragHoverTarget::End) => {
                 hover_membership.set(None);
                 hover_nest_item.set(None);
                 hover_end.set(true);
+                hover_root.set(false);
+            }
+            Some(DragHoverTarget::Root) => {
+                hover_membership.set(None);
+                hover_nest_item.set(None);
+                hover_end.set(false);
+                hover_root.set(true);
             }
             None => {
                 hover_membership.set(None);
                 hover_nest_item.set(None);
                 hover_end.set(false);
+                hover_root.set(false);
             }
         })
     };
@@ -293,11 +305,13 @@ fn app() -> Html {
         let hover_membership = hover_membership.clone();
         let hover_nest_item = hover_nest_item.clone();
         let hover_end = hover_end.clone();
+        let hover_root = hover_root.clone();
         Callback::from(move |_: ()| {
             dragging.set(None);
             hover_membership.set(None);
             hover_nest_item.set(None);
             hover_end.set(false);
+            hover_root.set(false);
         })
     };
 
@@ -519,6 +533,7 @@ fn app() -> Html {
                     on_navigate={on_navigate}
                     dragging={dragging.is_some()}
                     hover_nest_item={*hover_nest_item}
+                    hover_root={*hover_root}
                 />
                 if let Some(parent_item) = current_parent.and_then(|id| state.items.get(&id).cloned()) {
                     <ListHeader
