@@ -66,6 +66,7 @@ fn app() -> Html {
     let dragging = use_state(|| None::<Uuid>);
     let hover_membership = use_state(|| None::<Uuid>);
     let hover_nest_item = use_state(|| None::<Uuid>);
+    let hover_end = use_state(|| false);
     let search = use_state(|| None::<String>);
 
     // Resolve the current session once on mount.
@@ -241,18 +242,27 @@ fn app() -> Html {
     let on_drag_hover = {
         let hover_membership = hover_membership.clone();
         let hover_nest_item = hover_nest_item.clone();
+        let hover_end = hover_end.clone();
         Callback::from(move |target: Option<DragHoverTarget>| match target {
             Some(DragHoverTarget::Reorder(id)) => {
                 hover_membership.set(Some(id));
                 hover_nest_item.set(None);
+                hover_end.set(false);
             }
             Some(DragHoverTarget::Nest(id)) => {
                 hover_membership.set(None);
                 hover_nest_item.set(Some(id));
+                hover_end.set(false);
+            }
+            Some(DragHoverTarget::End) => {
+                hover_membership.set(None);
+                hover_nest_item.set(None);
+                hover_end.set(true);
             }
             None => {
                 hover_membership.set(None);
                 hover_nest_item.set(None);
+                hover_end.set(false);
             }
         })
     };
@@ -260,10 +270,12 @@ fn app() -> Html {
         let dragging = dragging.clone();
         let hover_membership = hover_membership.clone();
         let hover_nest_item = hover_nest_item.clone();
+        let hover_end = hover_end.clone();
         Callback::from(move |_: ()| {
             dragging.set(None);
             hover_membership.set(None);
             hover_nest_item.set(None);
+            hover_end.set(false);
         })
     };
 
@@ -348,6 +360,19 @@ fn app() -> Html {
         }
     }
 
+    // While a drag is in progress, redraw the list with the dragged row already sitting
+    // at the position it would land in on drop, instead of separately highlighting
+    // whatever it's hovering over.
+    let display_rows = match *dragging {
+        Some(dragging_id) if *hover_end => {
+            components::reorder_preview_rows(&rows, dragging_id, None)
+        }
+        Some(dragging_id) if hover_membership.is_some() => {
+            components::reorder_preview_rows(&rows, dragging_id, *hover_membership)
+        }
+        _ => rows.clone(),
+    };
+
     if *session == SessionState::Loading {
         return html! { <div class="app auth-screen"><p>{ "Loading..." }</p></div> };
     }
@@ -361,8 +386,8 @@ fn app() -> Html {
             <header>
                 <h1>{ "Lister" }</h1>
                 <div class="header-actions">
-                    <button class="trash-btn" onclick={toggle_trash}>
-                        { "Trash" }
+                    <button class="trash-btn" onclick={toggle_trash} title="Trash" aria-label="Trash">
+                        { components::trash_icon() }
                         if trash_count > 0 {
                             <span class="child-count">{ trash_count }</span>
                         }
@@ -402,6 +427,7 @@ fn app() -> Html {
                 if let Some(parent_item) = current_parent.and_then(|id| state.items.get(&id).cloned()) {
                     <ListHeader
                         item={parent_item.clone()}
+                        child_count={state.direct_child_count(parent_item.id)}
                         on_edit={{
                             let on_edit = on_edit.clone();
                             let state = state.clone();
@@ -432,7 +458,7 @@ fn app() -> Html {
                             </div>
                         </li>
                     }
-                    { for rows.iter().map(|(item, membership, depth)| {
+                    { for display_rows.iter().map(|(item, membership, depth)| {
                         html! {
                             <ItemRow
                                 key={membership.id.to_string()}
@@ -442,7 +468,6 @@ fn app() -> Html {
                                 on_open={on_open.clone()}
                                 on_edit={on_edit.clone()}
                                 dragging={*dragging}
-                                hover_membership={*hover_membership}
                                 hover_nest_item={*hover_nest_item}
                                 on_drag_start={on_drag_start.clone()}
                                 on_drag_hover={on_drag_hover.clone()}
@@ -451,6 +476,9 @@ fn app() -> Html {
                             />
                         }
                     }) }
+                    if dragging.is_some() {
+                        <li class={classes!("drop-gap", (*hover_end).then_some("drag-over"))}></li>
+                    }
                 </ul>
                 if rows.is_empty() {
                     <p class="empty">{ "Nothing here yet - add an item above." }</p>

@@ -5,7 +5,7 @@ use crate::google::{self, ImportedTaskList};
 use crate::markdown;
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
-use gloo_timers::callback::Timeout;
+use gloo_timers::callback::{Interval, Timeout};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -37,6 +37,31 @@ fn list_icon() -> Html {
             <line x1="5" y1="3.2" x2="14" y2="3.2" stroke="currentColor" stroke-width="1.3"/>
             <line x1="5" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.3"/>
             <line x1="5" y1="12.8" x2="14" y2="12.8" stroke="currentColor" stroke-width="1.3"/>
+        </svg>
+    }
+}
+
+pub(crate) fn trash_icon() -> Html {
+    html! {
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path d="M2.5 4.3h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/>
+            <path d="M6 4.3V2.9a0.9 0.9 0 0 1 0.9-0.9h2.2a0.9 0.9 0 0 1 0.9 0.9v1.4" stroke="currentColor" stroke-width="1.3" fill="none"/>
+            <path d="M4.3 4.3l0.6 8.8a1 1 0 0 0 1 0.9h4.2a1 1 0 0 0 1-0.9l0.6-8.8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/>
+            <line x1="6.5" y1="6.7" x2="6.8" y2="11.5" stroke="currentColor" stroke-width="1"/>
+            <line x1="9.5" y1="6.7" x2="9.2" y2="11.5" stroke="currentColor" stroke-width="1"/>
+        </svg>
+    }
+}
+
+/// Small calendar glyph shown on a row/list header when the item has a due, show, or
+/// hide date set.
+fn calendar_icon() -> Html {
+    html! {
+        <svg class="calendar-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <rect x="2" y="3" width="12" height="11" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="2" y1="6.3" x2="14" y2="6.3" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="5" y1="1.5" x2="5" y2="4.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="11" y1="1.5" x2="11" y2="4.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
         </svg>
     }
 }
@@ -634,6 +659,7 @@ pub fn composer(props: &ComposerProps) -> Html {
 #[derive(Properties, PartialEq)]
 pub struct ListHeaderProps {
     pub item: Item,
+    pub child_count: usize,
     pub on_edit: Callback<()>,
 }
 
@@ -665,6 +691,10 @@ pub fn list_header(props: &ListHeaderProps) -> Html {
         .map(|n| n.trim())
         .filter(|n| !n.is_empty());
 
+    let has_dates = props.item.due_at.is_some()
+        || props.item.show_after.is_some()
+        || props.item.hide_after.is_some();
+
     html! {
         <div class="list-header">
             <div class="list-header-row">
@@ -674,6 +704,14 @@ pub fn list_header(props: &ListHeaderProps) -> Html {
                 >
                     { &props.item.text }
                 </span>
+                if props.child_count > 0 {
+                    <span class="child-count list-header-count">{ props.child_count }</span>
+                }
+                if has_dates {
+                    <span class="dates-icon" title="Has scheduled dates">
+                        { calendar_icon() }
+                    </span>
+                }
                 <button class="edit-btn" onclick={edit} title="Edit" aria-label="Edit">
                     { edit_icon() }
                 </button>
@@ -724,12 +762,39 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
     }
 }
 
-/// What's currently under the pointer while dragging an item: either another row (to
-/// reorder before), or that row's chevron (to nest inside it).
+/// What's currently under the pointer while dragging an item: another row (to reorder
+/// before), that row's chevron (to nest inside it), or the gap after the last row (to
+/// move to the end of the list).
 #[derive(Clone, Copy, PartialEq)]
 pub enum DragHoverTarget {
     Reorder(Uuid),
     Nest(Uuid),
+    End,
+}
+
+/// Distance (px) from the top/bottom of the viewport within which an active drag
+/// auto-scrolls the page.
+const AUTOSCROLL_EDGE: f64 = 70.0;
+/// Fastest the page auto-scrolls (px per tick) right at the very edge of the viewport.
+const AUTOSCROLL_MAX_SPEED: f64 = 16.0;
+
+/// How fast (and which direction) to auto-scroll for a drag pointer currently at
+/// viewport-relative `y`: negative near the top, positive near the bottom, zero
+/// everywhere else.
+fn autoscroll_speed(y: f64) -> f64 {
+    let Some(height) = web_sys::window()
+        .and_then(|w| w.inner_height().ok())
+        .and_then(|v| v.as_f64())
+    else {
+        return 0.0;
+    };
+    if y < AUTOSCROLL_EDGE {
+        -((AUTOSCROLL_EDGE - y).max(0.0) / AUTOSCROLL_EDGE) * AUTOSCROLL_MAX_SPEED
+    } else if y > height - AUTOSCROLL_EDGE {
+        ((y - (height - AUTOSCROLL_EDGE)).max(0.0) / AUTOSCROLL_EDGE) * AUTOSCROLL_MAX_SPEED
+    } else {
+        0.0
+    }
 }
 
 /// Minimum on-screen movement (px) before a mouse press turns into a drag.
@@ -762,6 +827,9 @@ fn hover_target_at(x: f64, y: f64, dragged_membership_id: Uuid) -> Option<DragHo
         let item_id = nest.get_attribute("data-drop-item")?;
         return Uuid::parse_str(&item_id).ok().map(DragHoverTarget::Nest);
     }
+    if let Ok(Some(_)) = el.closest(".drop-gap") {
+        return Some(DragHoverTarget::End);
+    }
     if let Ok(Some(row)) = el.closest("[data-membership-id]") {
         let membership_id = row.get_attribute("data-membership-id")?;
         let membership_id = Uuid::parse_str(&membership_id).ok()?;
@@ -770,6 +838,39 @@ fn hover_target_at(x: f64, y: f64, dragged_membership_id: Uuid) -> Option<DragHo
         }
     }
     None
+}
+
+/// Reorders `rows` for live drag preview: pulls the dragged row (and, if it's a depth-0
+/// parent whose deeper descendants are also being shown, its subtree) out of its current
+/// slot and reinserts it just before `before_membership_id`, or at the very end when
+/// `None`. Purely a display-order computation - the real move only happens on drop.
+pub fn reorder_preview_rows(
+    rows: &[(Item, Membership, usize)],
+    dragged_membership_id: Uuid,
+    before_membership_id: Option<Uuid>,
+) -> Vec<(Item, Membership, usize)> {
+    if before_membership_id == Some(dragged_membership_id) {
+        return rows.to_vec();
+    }
+    let Some(drag_idx) = rows.iter().position(|(_, m, _)| m.id == dragged_membership_id) else {
+        return rows.to_vec();
+    };
+    let drag_depth = rows[drag_idx].2;
+    let mut end = drag_idx + 1;
+    while end < rows.len() && rows[end].2 > drag_depth {
+        end += 1;
+    }
+    let mut result = rows.to_vec();
+    let block: Vec<_> = result.drain(drag_idx..end).collect();
+    let insert_at = match before_membership_id {
+        Some(before_id) => result
+            .iter()
+            .position(|(_, m, _)| m.id == before_id)
+            .unwrap_or(result.len()),
+        None => result.len(),
+    };
+    result.splice(insert_at..insert_at, block);
+    result
 }
 
 #[derive(Properties, PartialEq)]
@@ -782,8 +883,9 @@ pub struct ItemRowProps {
     /// Membership id of the item currently being dragged, shared across all rows so each
     /// one can switch its far-right control to a "drop to nest" chevron.
     pub dragging: Option<Uuid>,
-    /// Current drop target, shared across all rows so the hovered one can highlight.
-    pub hover_membership: Option<Uuid>,
+    /// Current nest drop target, shared across all rows so the hovered chevron can
+    /// highlight - reorder targets don't need this since the list is redrawn with the
+    /// dragged row already in its prospective position instead.
     pub hover_nest_item: Option<Uuid>,
     pub on_drag_start: Callback<Uuid>,
     pub on_drag_hover: Callback<Option<DragHoverTarget>>,
@@ -805,6 +907,13 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     // mutable state instead, which every closure (however long-lived) reads live.
     let tracker: Rc<RefCell<Option<DragTracker>>> = use_mut_ref(|| None);
     let hold_timer: Rc<RefCell<Option<Timeout>>> = use_mut_ref(|| None);
+    // Runs while an active drag's pointer sits near the top/bottom of the viewport, to
+    // keep scrolling the page so the item can be dragged further than one screenful.
+    let autoscroll_timer: Rc<RefCell<Option<Interval>>> = use_mut_ref(|| None);
+    let autoscroll_y: Rc<RefCell<f64>> = use_mut_ref(|| 0.0);
+    // Set right before a real (moved) drag ends, so the "click" event the browser still
+    // fires right after pointerup doesn't also open/edit the row that was just dropped.
+    let suppress_click: Rc<RefCell<bool>> = use_mut_ref(|| false);
 
     let item = &props.item;
     let membership = &props.membership;
@@ -813,6 +922,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let is_list = !item.is_note && (item.is_list || child_count > 0);
     let is_dragging_this = props.dragging == Some(membership.id);
     let drag_active = props.dragging.is_some();
+    let has_dates = item.due_at.is_some() || item.show_after.is_some() || item.hide_after.is_some();
 
     let toggle_done = {
         let state = state.clone();
@@ -823,14 +933,21 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    // Tapping the row opens the sub-list if this item is (or acts as) a list, otherwise edits it.
+    // Tapping the row opens the sub-list if this item is (or acts as) a list, otherwise
+    // edits it - unless the tap is actually the tail end of a drag (the browser still
+    // fires a click right after pointerup), in which case it's swallowed instead.
     let open_or_edit = {
         let on_open = props.on_open.clone();
         let on_edit = props.on_edit.clone();
+        let suppress_click = suppress_click.clone();
         let id = item.id;
         let membership_id = membership.id;
         let navigate_in = is_list;
         Callback::from(move |_: MouseEvent| {
+            if *suppress_click.borrow() {
+                *suppress_click.borrow_mut() = false;
+                return;
+            }
             if navigate_in {
                 on_open.emit(id);
             } else {
@@ -910,6 +1027,8 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let on_pointer_move = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
+        let autoscroll_timer = autoscroll_timer.clone();
+        let autoscroll_y = autoscroll_y.clone();
         let on_drag_start = props.on_drag_start.clone();
         let on_drag_hover = props.on_drag_hover.clone();
         let membership_id = membership.id;
@@ -926,6 +1045,22 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             if t.active {
                 e.prevent_default();
                 on_drag_hover.emit(hover_target_at(x, y, membership_id));
+                *autoscroll_y.borrow_mut() = y;
+                if autoscroll_speed(y) != 0.0 {
+                    if autoscroll_timer.borrow().is_none() {
+                        let autoscroll_y = autoscroll_y.clone();
+                        *autoscroll_timer.borrow_mut() = Some(Interval::new(16, move || {
+                            let speed = autoscroll_speed(*autoscroll_y.borrow());
+                            if speed != 0.0 {
+                                if let Some(win) = web_sys::window() {
+                                    win.scroll_by_with_x_and_y(0.0, speed);
+                                }
+                            }
+                        }));
+                    }
+                } else {
+                    *autoscroll_timer.borrow_mut() = None;
+                }
                 return;
             }
 
@@ -968,6 +1103,8 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let on_pointer_up = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
+        let autoscroll_timer = autoscroll_timer.clone();
+        let suppress_click = suppress_click.clone();
         let state = state.clone();
         let on_drag_hover = props.on_drag_hover.clone();
         let on_drag_end = props.on_drag_end.clone();
@@ -980,8 +1117,10 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 return;
             }
             *hold_timer.borrow_mut() = None;
+            *autoscroll_timer.borrow_mut() = None;
             *tracker.borrow_mut() = None;
             if t.active {
+                *suppress_click.borrow_mut() = true;
                 let target = hover_target_at(
                     e.client_x() as f64,
                     e.client_y() as f64,
@@ -1000,6 +1139,9 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                             target_item_id,
                         });
                     }
+                    Some(DragHoverTarget::End) => {
+                        state.dispatch(Action::MoveToEnd { membership_id });
+                    }
                     None => {}
                 }
                 on_drag_hover.emit(None);
@@ -1011,13 +1153,17 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let on_pointer_cancel = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
+        let autoscroll_timer = autoscroll_timer.clone();
+        let suppress_click = suppress_click.clone();
         let on_drag_hover = props.on_drag_hover.clone();
         let on_drag_end = props.on_drag_end.clone();
         Callback::from(move |_: PointerEvent| {
             *hold_timer.borrow_mut() = None;
+            *autoscroll_timer.borrow_mut() = None;
             let was_active = tracker.borrow().as_ref().map(|t| t.active).unwrap_or(false);
             *tracker.borrow_mut() = None;
             if was_active {
+                *suppress_click.borrow_mut() = true;
                 on_drag_hover.emit(None);
                 on_drag_end.emit(());
             }
@@ -1033,14 +1179,12 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         .map(|line| line.trim())
         .filter(|line| !line.is_empty());
 
-    let is_hover_target = props.hover_membership == Some(membership.id);
     let is_nest_hover = props.hover_nest_item == Some(item.id);
 
     let row_class = classes!(
         "item",
         item.done.then_some("done"),
         (!membership.visible).then_some("hidden-row"),
-        is_hover_target.then_some("drag-over"),
         is_dragging_this.then_some("dragging"),
         (props.depth > 0).then_some("nested-row")
     );
@@ -1081,6 +1225,11 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 </div>
                 if child_count > 0 {
                     <span class="child-count">{ child_count }</span>
+                }
+                if has_dates {
+                    <span class="dates-icon" title="Has scheduled dates">
+                        { calendar_icon() }
+                    </span>
                 }
                 if drag_active && !is_dragging_this && interactive_drag {
                     <span
@@ -1130,6 +1279,9 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     let large_notes = use_state(|| item.is_note || item.notes.is_some());
     let confirm_remove = use_state(|| false);
     let remove_children = use_state(|| true);
+    // Collapsed by default - the due date/show/hide/repeat section is the least commonly
+    // touched part of the form and takes up a lot of room when expanded.
+    let show_dates = use_state(|| false);
 
     let due_input = use_state(|| item.due_at.map(to_datetime_local_value).unwrap_or_default());
 
@@ -1415,6 +1567,11 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleVisible(membership_id)))
     });
 
+    let toggle_dates = {
+        let show_dates = show_dates.clone();
+        Callback::from(move |_: MouseEvent| show_dates.set(!*show_dates))
+    };
+
     let manage_lists = {
         let on_manage_lists = props.on_manage_lists.clone();
         let id = item.id;
@@ -1496,6 +1653,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                         }
                     </div>
                 </div>
+                if *show_dates {
                 <div class="editor-schedule">
                     <label class="editor-field">
                         <span>{ "Due date" }</span>
@@ -1577,7 +1735,9 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                         </label>
                     }
                 </div>
+                }
                 <div class="editor-secondary-actions">
+                    <button type="button" onclick={toggle_dates}>{ "Dates" }</button>
                     if let Some(toggle_visible) = toggle_visible {
                         <button onclick={toggle_visible}>
                             { if membership_visible { "Hide" } else { "Show" } }

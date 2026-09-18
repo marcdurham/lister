@@ -244,6 +244,10 @@ pub enum Action {
         membership_id: Uuid,
         before_id: Uuid,
     },
+    /// Move `membership_id` to the end of its current list.
+    MoveToEnd {
+        membership_id: Uuid,
+    },
     /// Move `membership_id` to become a child of `target_item_id`, turning the target
     /// into a list if it isn't already one.
     MoveInto {
@@ -421,6 +425,26 @@ impl Reducible for AppState {
                 };
                 if let Some(m) = next.memberships.get_mut(&membership_id) {
                     m.position = new_position;
+                    m.updated_at = Utc::now();
+                    store::put_membership(m.clone());
+                }
+                Rc::new(next)
+            }
+            Action::MoveToEnd { membership_id } => {
+                let mut next = (*self).clone();
+                let Some(parent) = next.memberships.get(&membership_id).map(|m| m.parent_id)
+                else {
+                    return Rc::new(next);
+                };
+                let next_pos = self
+                    .children(parent, true)
+                    .into_iter()
+                    .filter(|(_, m)| m.id != membership_id)
+                    .last()
+                    .map(|(_, m)| m.position + 1.0)
+                    .unwrap_or(1.0);
+                if let Some(m) = next.memberships.get_mut(&membership_id) {
+                    m.position = next_pos;
                     m.updated_at = Utc::now();
                     store::put_membership(m.clone());
                 }
