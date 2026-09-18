@@ -84,6 +84,33 @@ impl AppState {
         }
     }
 
+    /// Every live item anywhere in the hierarchy whose text contains `query` (already
+    /// lowercased and non-empty), each paired with one of its live memberships - used so
+    /// a search from the root list finds items nested inside any list, not just top-level
+    /// ones. Depth is always 1, marking these as non-drag-and-drop rows the same way a
+    /// nested-children row is: they aren't siblings of one another in any real list, so
+    /// reordering or dropping onto them wouldn't mean anything.
+    pub fn search_all(&self, query: &str, include_hidden: bool) -> Vec<(Item, Membership, usize)> {
+        let now = Utc::now();
+        let mut rows: Vec<(Item, Membership, usize)> = self
+            .items
+            .values()
+            .filter(|item| item.deleted_at.is_none())
+            .filter(|item| item.text.to_lowercase().contains(query))
+            .filter(|item| include_hidden || item.is_time_visible(now))
+            .filter_map(|item| {
+                let membership = self.memberships.values().find(|m| {
+                    m.item_id == item.id
+                        && m.deleted_at.is_none()
+                        && (include_hidden || m.visible)
+                })?;
+                Some((item.clone(), membership.clone(), 1))
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.text.to_lowercase().cmp(&b.0.text.to_lowercase()));
+        rows
+    }
+
     /// Any live membership id for this item - used to open the item editor for an item
     /// reached by its id alone (e.g. the current list's own title), where a specific
     /// membership isn't already in hand.

@@ -164,6 +164,15 @@ fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
 }
 
+/// A `font-size` declaration for the item editor's page title, scaled down for longer
+/// text so it fits in a reasonable number of lines instead of a very long title towering
+/// over the rest of the form at full heading size.
+fn title_font_size(text: &str) -> String {
+    let len = text.chars().count().max(1) as f32;
+    let size = (34.0 / len.sqrt()).clamp(18.0, 34.0);
+    format!("font-size: {size}px;")
+}
+
 /// Formats a `DateTime<Utc>` for a `<input type="datetime-local">` value (local time,
 /// no timezone/seconds), and parses one back. Both directions go through the JS `Date`
 /// object so the conversion follows the browser's own local timezone.
@@ -1728,9 +1737,9 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     let removable_children = state.only_child_descendant_ids(item.id).len();
 
     html! {
-        <div class="editor-overlay">
-            <div class={classes!("editor", (*large_notes).then_some("editor-large"))}>
-                <h2>{ "Edit item" }</h2>
+        <div class="editor-overlay item-editor-page">
+            <div class={classes!("editor", "item-editor", (*large_notes).then_some("editor-large"))}>
+                <h2 class="editor-title" style={title_font_size(&text)}>{ (*text).clone() }</h2>
                 <label class="editor-field">
                     <span class="editor-field-label">
                         { "Text" }

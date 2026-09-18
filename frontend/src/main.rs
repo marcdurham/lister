@@ -28,18 +28,27 @@ const SYNC_INTERVAL_MS: u32 = 30_000;
 /// refresh, and offline that could be a very long wait.
 const VISIBILITY_TICK_MS: u32 = 30_000;
 
-/// Encode a navigation path into the value stored in `history.state`.
-fn path_to_js(path: &[Uuid]) -> JsValue {
-    let strs: Vec<String> = path.iter().map(|id| id.to_string()).collect();
-    JsValue::from_str(&serde_json::to_string(&strs).unwrap_or_default())
+/// What a single entry in the browser's session history encodes: the list path, and -
+/// since the item editor is pushed as its own history entry rather than shown as a modal
+/// - which item (if any) is open for editing on top of it. This is what makes the
+/// browser's own back button close the editor and land back on the same list, rather than
+/// leaving the list navigation and the editor out of sync with each other.
+#[derive(Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+struct Route {
+    path: Vec<Uuid>,
+    editing: Option<(Uuid, Uuid)>,
 }
 
-/// Decode a navigation path back out of `history.state` (or the empty path if absent/invalid).
-fn js_to_path(value: JsValue) -> Vec<Uuid> {
+/// Encode a route into the value stored in `history.state`.
+fn route_to_js(route: &Route) -> JsValue {
+    JsValue::from_str(&serde_json::to_string(route).unwrap_or_default())
+}
+
+/// Decode a route back out of `history.state` (or the default, empty route if absent/invalid).
+fn js_to_route(value: JsValue) -> Route {
     value
         .as_string()
-        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .map(|strs| strs.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect())
+        .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
 
@@ -175,33 +184,46 @@ fn app() -> Html {
     }
 
     // Push a browser history entry for every in-app navigation, so the browser's own
-    // back button walks back up the hierarchy one level at a time.
+    // back button walks back up the hierarchy one level at a time. Also closes the item
+    // editor (if open), since it belongs to whichever list it was opened from.
     let navigate = {
         let path = path.clone();
         let search = search.clone();
+        let editing = editing.clone();
         Callback::from(move |new_path: Vec<Uuid>| {
+            let route = Route {
+                path: new_path.clone(),
+                editing: None,
+            };
             if let Some(window) = web_sys::window() {
                 if let Ok(history) = window.history() {
-                    let _ = history.push_state_with_url(&path_to_js(&new_path), "", None);
+                    let _ = history.push_state_with_url(&route_to_js(&route), "", None);
                 }
             }
             path.set(new_path);
             search.set(None);
+            editing.set(None);
         })
     };
 
-    // Sync `path` from the browser's session history on back/forward navigation.
+    // Sync `path` and `editing` from the browser's session history on back/forward
+    // navigation - this is what makes the browser's back button close the item editor
+    // (pushed as its own entry - see `open_editor` below) instead of leaving it open over
+    // whatever list navigating back landed on.
     {
         let path = path.clone();
+        let editing = editing.clone();
         use_effect_with((), move |_| {
             if let Some(window) = web_sys::window() {
                 if let Ok(history) = window.history() {
-                    let _ = history.replace_state_with_url(&path_to_js(&[]), "", None);
+                    let _ = history.replace_state_with_url(&route_to_js(&Route::default()), "", None);
                 }
             }
             let listener = EventListener::new(&web_sys::window().unwrap(), "popstate", move |e| {
                 if let Ok(event) = e.clone().dyn_into::<web_sys::PopStateEvent>() {
-                    path.set(js_to_path(event.state()));
+                    let route = js_to_route(event.state());
+                    path.set(route.path);
+                    editing.set(route.editing);
                 }
             });
             move || drop(listener)
@@ -291,20 +313,41 @@ fn app() -> Html {
         })
     };
 
+    // Opening the item editor pushes its own history entry (same list path, `editing`
+    // set) rather than just flipping local state, so it behaves like navigating to a page
+    // - the browser's back button (or the editor's own Cancel/Save, which triggers the
+    // same `history.back()`) returns to this exact list rather than to wherever `editing`
+    // happened to point before.
     let on_edit = {
+        let path = path.clone();
         let editing = editing.clone();
-        Callback::from(move |ids: (Uuid, Uuid)| editing.set(Some(ids)))
+        Callback::from(move |ids: (Uuid, Uuid)| {
+            let route = Route {
+                path: (*path).clone(),
+                editing: Some(ids),
+            };
+            if let Some(window) = web_sys::window() {
+                if let Ok(history) = window.history() {
+                    let _ = history.push_state_with_url(&route_to_js(&route), "", None);
+                }
+            }
+            editing.set(Some(ids));
+        })
     };
-    let close_editor = {
-        let editing = editing.clone();
-        Callback::from(move |_: ()| editing.set(None))
-    };
+    // Pops the history entry `on_edit` pushed; the popstate listener above is what
+    // actually clears `editing` once that happens.
+    let close_editor = Callback::from(move |_: ()| {
+        if let Some(window) = web_sys::window() {
+            let _ = window.history().and_then(|h| h.back());
+        }
+    });
 
     let on_manage_lists = {
-        let editing = editing.clone();
         let managing_lists = managing_lists.clone();
         Callback::from(move |item_id: Uuid| {
-            editing.set(None);
+            if let Some(window) = web_sys::window() {
+                let _ = window.history().and_then(|h| h.back());
+            }
             managing_lists.set(Some(item_id));
         })
     };
@@ -344,7 +387,16 @@ fn app() -> Html {
         .and_then(|id| state.items.get(&id))
         .map(|i| i.show_nested_children)
         .unwrap_or(false);
-    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if nested_mode {
+    let query_lower = (*search)
+        .as_deref()
+        .map(|q| q.trim().to_lowercase())
+        .filter(|q| !q.is_empty());
+    // Searching from the root list has nothing meaningful to scope to, so it searches
+    // every list instead of just the top-level ones.
+    let searching_globally = current_parent.is_none() && query_lower.is_some();
+    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if searching_globally {
+        state.search_all(query_lower.as_deref().unwrap(), *show_hidden)
+    } else if nested_mode {
         state.children_recursive(current_parent, *show_hidden)
     } else {
         state
@@ -353,10 +405,9 @@ fn app() -> Html {
             .map(|(item, membership)| (item, membership, 0))
             .collect()
     };
-    if let Some(query) = (*search).as_deref() {
-        let query_lower = query.trim().to_lowercase();
-        if !query_lower.is_empty() {
-            rows.retain(|(item, _, _)| item.text.to_lowercase().contains(&query_lower));
+    if !searching_globally {
+        if let Some(query) = &query_lower {
+            rows.retain(|(item, _, _)| item.text.to_lowercase().contains(query));
         }
     }
 
@@ -424,7 +475,6 @@ fn app() -> Html {
     html! {
         <div class="app">
             <header>
-                <h1>{ "Lister" }</h1>
                 <div class="header-actions">
                     <button class="trash-btn" onclick={toggle_trash} title="Trash" aria-label="Trash">
                         { components::trash_icon() }
