@@ -1,6 +1,13 @@
+/* The theme is always resolved to an explicit `data-theme` on <html> (see the inline
+   script in index.html) - "system" mode is handled there by following the OS setting,
+   so the stylesheet never needs a prefers-color-scheme query of its own. */
 :root {
-    color-scheme: light dark;
+    color-scheme: light;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
 }
 
 body {
@@ -240,6 +247,33 @@ header {
     background: #f1f3f5;
 }
 
+.settings-section {
+    border-top: 1px solid #e4e7eb;
+    margin-top: 0.3rem;
+    padding-top: 0.3rem;
+}
+
+.settings-section-label {
+    padding: 0.3rem 0.8rem 0.1rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #616e7c;
+}
+
+.settings-item.theme-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Fixed-width slot so the labels line up whether or not the check mark is shown. */
+.theme-option .theme-check {
+    width: 1em;
+    text-align: center;
+    color: #1f6feb;
+}
+
 .google-import-select-actions {
     display: flex;
     gap: 0.5rem;
@@ -439,11 +473,21 @@ header {
 }
 
 .item {
+    /* Anchors the absolutely positioned .nest-target shown while dragging. */
+    position: relative;
     background: #000;
     color: #f5f6f8;
     padding: 0.6rem 0.8rem;
     user-select: none;
     -webkit-user-select: none;
+}
+
+/* The row the dragged item would be nested inside if released right now. An outline
+   (rather than a border) so the row keeps its exact size, inset so it isn't painted over
+   by the neighbouring rows. */
+.item.nest-hover {
+    outline: 2px solid #fff;
+    outline-offset: -2px;
 }
 
 .item.hidden-row {
@@ -494,29 +538,45 @@ header {
    rather than its own top edge. */
 .item-main > input[type="checkbox"],
 .item-main > .note-icon,
-.item-main > .list-icon {
+.item-main > .list-icon,
+.item-main > .nest-hover-icon {
     margin-top: 0.2em;
 }
 
+/* "Drop here to nest inside this row" target, shown on every other row while a drag is
+   in progress. It's laid over the right part of the row and spans the row's full height
+   (padding included), so the targets of adjacent rows touch with no gap between them -
+   otherwise moving the pointer from one row's target to the next would briefly pass over
+   plain row, which reads as a reorder and makes the dragged item jump back and forth. */
 .nest-target {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 45%;
     display: flex;
     align-items: center;
-    justify-content: center;
-    border: none;
-    background: #eef2ff;
-    color: #1f6feb;
+    justify-content: flex-end;
+    padding-right: 0.8rem;
+    box-sizing: border-box;
+    background: linear-gradient(to right, rgba(31, 111, 235, 0) 0%, rgba(31, 111, 235, 0.35) 45%);
+    color: #74a9ff;
     cursor: pointer;
-    flex-shrink: 0;
-    width: 2.1rem;
-    height: 2.1rem;
-    border-radius: 6px;
 }
 
 .nest-target.drag-over {
-    background: #1f6feb;
+    background: rgba(31, 111, 235, 0.55);
     color: white;
-    outline: 2px dashed #1f6feb;
-    outline-offset: 2px;
+}
+
+/* Left-hand icon while the row is the nest target: mirrors the chevron on the right so
+   the whole row reads as "the dragged item goes in here". */
+.nest-hover-icon {
+    display: flex;
+    flex-shrink: 0;
+    color: #fff;
+    width: 16px;
+    height: 16px;
 }
 
 .item-title-group {
@@ -610,13 +670,17 @@ header {
     border-radius: 4px;
 }
 
-/* Same footprint as .nest-target, which replaces this button while a drag is in
-   progress - otherwise every row grows the moment a drag starts, since the row's own
-   height follows whichever far-right control is currently taller. */
 .item-main .edit-btn {
     width: 2.1rem;
     height: 2.1rem;
     box-sizing: border-box;
+}
+
+/* While a drag is in progress the .nest-target overlay takes this button's place, but
+   the button stays in the flow (just invisible) so the row keeps its exact height -
+   otherwise every row would shrink the moment a drag starts. */
+.item-main .edit-btn.drag-placeholder {
+    visibility: hidden;
 }
 
 .more-btn:hover,
@@ -1082,7 +1146,7 @@ header {
     }
 }
 
-@media (prefers-color-scheme: dark) {
+:root[data-theme="dark"] {
     body {
         background: #1f2933;
         color: #f5f6f8;
@@ -1194,13 +1258,18 @@ header {
     .settings-item:hover {
         background: #3e4c59;
     }
+    .settings-section {
+        border-top-color: #52606d;
+    }
+    .settings-section-label {
+        color: #9aa5b1;
+    }
+    .theme-option .theme-check {
+        color: #74a9ff;
+    }
     .session-status-line,
     .session-email {
         color: #cbd2d9;
-    }
-    .nest-target {
-        background: #2c3947;
-        color: #74a9ff;
     }
     .item-notes-preview {
         color: #9aa5b1;

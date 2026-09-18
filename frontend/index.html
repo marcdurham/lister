@@ -8,6 +8,31 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <script>
+        // Resolves the saved theme preference ("light", "dark", or "system" - see
+        // `store::load_theme`) into `data-theme="light|dark"` on <html>, which is what the
+        // stylesheet keys off. It runs inline, before the WASM app loads, so the page
+        // doesn't flash the wrong theme on startup; the app calls it again whenever the
+        // preference changes.
+        (function () {
+            var media = window.matchMedia("(prefers-color-scheme: dark)");
+            function apply() {
+                var mode = "system";
+                try {
+                    mode = localStorage.getItem("lister.theme") || "system";
+                } catch (e) {}
+                var dark = mode === "dark" || (mode !== "light" && media.matches);
+                document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+                var meta = document.querySelector('meta[name="theme-color"]');
+                if (meta) {
+                    meta.setAttribute("content", dark ? "#1f2933" : "#f5f6f8");
+                }
+            }
+            media.addEventListener("change", apply);
+            window.listerApplyTheme = apply;
+            apply();
+        })();
+    </script>
     <link data-trunk rel="rust" data-wasm-opt="z" />
     <link data-trunk rel="copy-file" href="static/manifest.json" />
     <link data-trunk rel="copy-file" href="static/service-worker.js" />

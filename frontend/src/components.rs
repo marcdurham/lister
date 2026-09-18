@@ -5,6 +5,7 @@ use crate::google::{self, ImportedTaskList};
 use crate::markdown;
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
+use crate::store::{self, ThemeMode};
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_timers::callback::{Interval, Timeout};
 use std::cell::RefCell;
@@ -87,11 +88,12 @@ fn edit_icon() -> Html {
     }
 }
 
-/// Larger right-pointing chevron shown in place of the edit button while a drag is in
-/// progress - dropping another item onto it nests the dragged item under this one.
-fn chevron_icon() -> Html {
+/// Right-pointing chevron. Shown over the right part of every other row while a drag is
+/// in progress (dropping there nests the dragged item under that row), and, smaller, in
+/// place of the row's left-hand icon on the row currently being hovered as that target.
+fn chevron_icon(size: u32) -> Html {
     html! {
-        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width={size.to_string()} height={size.to_string()} aria-hidden="true">
             <polyline points="5,2 12,8 5,14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
     }
@@ -1312,8 +1314,10 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         item.done.then_some("done"),
         (!membership.visible).then_some("hidden-row"),
         is_dragging_this.then_some("dragging"),
+        is_nest_hover.then_some("nest-hover"),
         (props.depth > 0).then_some("nested-row")
     );
+    let shows_nest_target = drag_active && !is_dragging_this && interactive_drag;
     // A nested row's own true parent differs from the list currently being viewed, so it
     // isn't a valid drag source or drop target (see `interactive_drag` above) - dropping
     // onto one would silently misplace an item relative to its real parent.
@@ -1330,7 +1334,9 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 onpointerup={on_pointer_up}
                 onpointercancel={on_pointer_cancel}
             >
-                if item.is_note {
+                if is_nest_hover {
+                    <span class="nest-hover-icon" aria-hidden="true">{ chevron_icon(16) }</span>
+                } else if item.is_note {
                     { note_icon() }
                 } else if is_list {
                     { list_icon() }
@@ -1356,27 +1362,26 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                         { calendar_icon() }
                     </span>
                 }
-                if drag_active && !is_dragging_this && interactive_drag {
-                    <span
-                        class={classes!("nest-target", is_nest_hover.then_some("drag-over"))}
-                        title="Drop to move inside"
-                        data-drop-item={item.id.to_string()}
-                        onpointerdown={stop_pointer_down}
-                    >
-                        { chevron_icon() }
-                    </span>
-                } else {
-                    <button
-                        class="edit-btn"
-                        onclick={edit}
-                        onpointerdown={stop_pointer_down}
-                        title="Edit"
-                        aria-label="Edit"
-                    >
-                        { edit_icon() }
-                    </button>
-                }
+                <button
+                    class={classes!("edit-btn", shows_nest_target.then_some("drag-placeholder"))}
+                    onclick={edit}
+                    onpointerdown={stop_pointer_down.clone()}
+                    title="Edit"
+                    aria-label="Edit"
+                >
+                    { edit_icon() }
+                </button>
             </div>
+            if shows_nest_target {
+                <span
+                    class={classes!("nest-target", is_nest_hover.then_some("drag-over"))}
+                    title="Drop to move inside"
+                    data-drop-item={item.id.to_string()}
+                    onpointerdown={stop_pointer_down}
+                >
+                    { chevron_icon(20) }
+                </span>
+            }
         </li>
     }
 }
@@ -2412,6 +2417,31 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
         Callback::from(move |_: MouseEvent| open.set(!*open))
     };
 
+    let theme = use_state(store::load_theme);
+    let theme_options = ThemeMode::ALL.iter().map(|&mode| {
+        let on_select = {
+            let theme = theme.clone();
+            let open = open.clone();
+            Callback::from(move |_: MouseEvent| {
+                store::save_theme(mode);
+                theme.set(mode);
+                open.set(false);
+            })
+        };
+        let selected = *theme == mode;
+        html! {
+            <button
+                key={mode.as_str()}
+                class="settings-item theme-option"
+                onclick={on_select}
+                aria-pressed={selected.to_string()}
+            >
+                <span class="theme-check" aria-hidden="true">{ if selected { "✓" } else { "" } }</span>
+                { mode.label() }
+            </button>
+        }
+    });
+
     let open_admin = {
         let open = open.clone();
         let on_open_admin = props.on_open_admin.clone();
@@ -2607,6 +2637,10 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                             { "Admin" }
                         </button>
                     }
+                    <div class="settings-section" role="group" aria-label="Theme">
+                        <div class="settings-section-label">{ "Theme" }</div>
+                        { for theme_options }
+                    </div>
                 </div>
             }
             <input

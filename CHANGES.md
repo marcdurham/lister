@@ -140,3 +140,19 @@
   30s purely to force re-evaluation of each item's show/hide window against the current
   time; unlike the sync loop it also runs while offline, so this works for a guest who's
   never logged in too.
+
+## 2026-09-17 23:15 PDT
+- Added a Theme section (System / Light / Dark) to the settings menu. The choice is
+  stored as a bare string under `lister.theme`, and a small inline script in
+  `index.html` resolves it (following the OS setting in System mode, live) into a
+  `data-theme` attribute on `<html>` before the app loads, so there's no flash of the
+  wrong theme on startup. The stylesheet's dark rules now key off
+  `:root[data-theme="dark"]` instead of a `prefers-color-scheme` media query.
+- Reworked the drag-to-nest target. It used to be a small chevron button in place of
+  the edit button, shorter than the row, so moving the pointer from one row's chevron
+  to the next passed over plain row (a reorder target) and the dragged item flashed
+  back and forth. The target now covers the right 45% of the row at the row's full
+  height, so adjacent targets touch with no gap. Hovering it outlines the whole row in
+  white (an inset outline, so the row's size doesn't change) and swaps the row's
+  left-hand icon for a right-pointing chevron. The edit button stays in the row
+  (invisible) during a drag so row heights don't shift when a drag starts.

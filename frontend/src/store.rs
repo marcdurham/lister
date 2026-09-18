@@ -9,6 +9,7 @@ const ITEMS_KEY: &str = "lister.items";
 const MEMBERSHIPS_KEY: &str = "lister.memberships";
 const CURSOR_KEY: &str = "lister.cursor";
 const HAS_LOGGED_IN_KEY: &str = "lister.has_logged_in";
+const THEME_KEY: &str = "lister.theme";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ItemRecord {
@@ -55,6 +56,58 @@ pub fn has_logged_in() -> bool {
 
 pub fn mark_logged_in() {
     let _ = LocalStorage::set(HAS_LOGGED_IN_KEY, true);
+}
+
+/// Light/dark appearance preference from the settings menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeMode {
+    /// Follow the OS/browser setting (the default).
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    pub const ALL: [ThemeMode; 3] = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeMode::System => "System",
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+        }
+    }
+}
+
+/// Stored as a bare string (not gloo's JSON encoding) because the inline script in
+/// index.html reads the same key to apply the theme before the app has loaded.
+pub fn load_theme() -> ThemeMode {
+    match LocalStorage::raw().get_item(THEME_KEY).ok().flatten().as_deref() {
+        Some("light") => ThemeMode::Light,
+        Some("dark") => ThemeMode::Dark,
+        _ => ThemeMode::System,
+    }
+}
+
+pub fn save_theme(mode: ThemeMode) {
+    let _ = LocalStorage::raw().set_item(THEME_KEY, mode.as_str());
+    apply_theme();
+}
+
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    /// Defined inline in index.html: re-resolves the saved preference into the
+    /// `data-theme` attribute the stylesheet keys off.
+    #[wasm_bindgen(js_namespace = window, js_name = listerApplyTheme)]
+    fn apply_theme();
 }
 
 /// Insert/update a single item locally, marking it dirty so the next sync push picks it up.
