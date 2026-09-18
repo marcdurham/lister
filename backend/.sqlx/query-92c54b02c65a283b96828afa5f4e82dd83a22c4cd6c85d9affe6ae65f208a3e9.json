@@ -1,0 +1,131 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at,\n                  due_at, show_after, show_before_due_amount, show_before_due_unit,\n                  hide_after, hide_after_created_amount, hide_after_created_unit,\n                  recur_amount, recur_unit, show_nested_children\n           FROM items WHERE updated_at > $1 AND owner_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "text",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "notes",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "is_note",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "is_list",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "done",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "due_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "show_after",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "show_before_due_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "show_before_due_unit",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "hide_after",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "hide_after_created_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "hide_after_created_unit",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "recur_amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "recur_unit",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "show_nested_children",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "92c54b02c65a283b96828afa5f4e82dd83a22c4cd6c85d9affe6ae65f208a3e9"
+}

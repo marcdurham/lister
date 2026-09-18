@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Months, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -14,6 +14,56 @@ pub struct Item {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub due_at: Option<DateTime<Utc>>,
+    /// Absolute instant the item becomes visible. Either set directly (fixed mode) or
+    /// kept in sync with `due_at` via `show_before_due_amount`/`show_before_due_unit`.
+    #[serde(default)]
+    pub show_after: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub show_before_due_amount: Option<i64>,
+    #[serde(default)]
+    pub show_before_due_unit: Option<String>,
+    /// Absolute instant the item becomes hidden. Either set directly (fixed mode) or
+    /// kept in sync with `created_at` via `hide_after_created_amount`/`hide_after_created_unit`.
+    #[serde(default)]
+    pub hide_after: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub hide_after_created_amount: Option<i64>,
+    #[serde(default)]
+    pub hide_after_created_unit: Option<String>,
+    /// When set, marking the item done instead un-marks it and advances `due_at` by this
+    /// amount/unit - see `advance_recurrence`.
+    #[serde(default)]
+    pub recur_amount: Option<i64>,
+    #[serde(default)]
+    pub recur_unit: Option<String>,
+    /// Per-list display setting: show every descendant level (lightly indented) instead
+    /// of just direct children.
+    #[serde(default)]
+    pub show_nested_children: bool,
+}
+
+/// A time unit used by both the show-before-due and hide-after-created offsets, and by
+/// recurrence intervals. Stored on `Item` as a plain string so the wire/DB format needs
+/// no custom type.
+pub const TIME_UNITS: &[&str] = &["minutes", "hours", "days", "weeks", "months"];
+
+fn add_units(base: DateTime<Utc>, amount: i64, unit: &str) -> Option<DateTime<Utc>> {
+    match unit {
+        "minutes" => Some(base + chrono::Duration::minutes(amount)),
+        "hours" => Some(base + chrono::Duration::hours(amount)),
+        "days" => Some(base + chrono::Duration::days(amount)),
+        "weeks" => Some(base + chrono::Duration::weeks(amount)),
+        "months" => {
+            if amount >= 0 {
+                base.checked_add_months(Months::new(amount as u32))
+            } else {
+                base.checked_sub_months(Months::new((-amount) as u32))
+            }
+        }
+        _ => None,
+    }
 }
 
 impl Item {
@@ -29,7 +79,76 @@ impl Item {
             created_at: now,
             updated_at: now,
             deleted_at: None,
+            due_at: None,
+            show_after: None,
+            show_before_due_amount: None,
+            show_before_due_unit: None,
+            hide_after: None,
+            hide_after_created_amount: None,
+            hide_after_created_unit: None,
+            recur_amount: None,
+            recur_unit: None,
+            show_nested_children: false,
         }
+    }
+
+    /// Whether the item should currently be shown, based on `show_after`/`hide_after`
+    /// alone (independent of a membership's own `visible` flag).
+    pub fn is_time_visible(&self, now: DateTime<Utc>) -> bool {
+        if let Some(show_after) = self.show_after {
+            if now < show_after {
+                return false;
+            }
+        }
+        if let Some(hide_after) = self.hide_after {
+            if now >= hide_after {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Recomputes `show_after` from `due_at` when in "before due" mode (both
+    /// `show_before_due_amount`/`unit` set) - a fixed `show_after` or "always visible"
+    /// (neither set) are left untouched.
+    pub fn recompute_show_after(&mut self) {
+        if let (Some(amount), Some(unit), Some(due)) = (
+            self.show_before_due_amount,
+            self.show_before_due_unit.as_deref(),
+            self.due_at,
+        ) {
+            self.show_after = add_units(due, -amount, unit);
+        }
+    }
+
+    /// Recomputes `hide_after` from `created_at` when in "after created" mode (both
+    /// `hide_after_created_amount`/`unit` set) - a fixed `hide_after` or "never" (neither
+    /// set) are left untouched.
+    pub fn recompute_hide_after(&mut self) {
+        if let (Some(amount), Some(unit)) = (
+            self.hide_after_created_amount,
+            self.hide_after_created_unit.as_deref(),
+        ) {
+            self.hide_after = add_units(self.created_at, amount, unit);
+        }
+    }
+
+    /// If this item recurs, un-marks it as done and advances `due_at` (from its previous
+    /// due date, or from `now` if it had none) by the recurrence interval, recomputing
+    /// `show_after` to match. Returns `false` (leaving the item untouched) if it doesn't
+    /// recur or the interval is invalid.
+    pub fn advance_recurrence(&mut self, now: DateTime<Utc>) -> bool {
+        let (Some(amount), Some(unit)) = (self.recur_amount, self.recur_unit.clone()) else {
+            return false;
+        };
+        let base = self.due_at.unwrap_or(now);
+        let Some(next) = add_units(base, amount, &unit) else {
+            return false;
+        };
+        self.due_at = Some(next);
+        self.done = false;
+        self.recompute_show_after();
+        true
     }
 }
 
@@ -179,5 +298,89 @@ mod tests {
         let decoded: SyncResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.items.len(), 1);
         assert_eq!(decoded.items[0].id, item.id);
+    }
+
+    #[test]
+    fn is_time_visible_respects_show_and_hide() {
+        let now = Utc::now();
+        let mut item = Item::new("t".into(), false);
+        assert!(item.is_time_visible(now));
+
+        item.show_after = Some(now + Duration::minutes(5));
+        assert!(!item.is_time_visible(now));
+        assert!(item.is_time_visible(now + Duration::minutes(6)));
+
+        item.show_after = None;
+        item.hide_after = Some(now + Duration::minutes(5));
+        assert!(item.is_time_visible(now));
+        assert!(!item.is_time_visible(now + Duration::minutes(6)));
+    }
+
+    #[test]
+    fn recompute_show_after_derives_from_due_date() {
+        let mut item = Item::new("t".into(), false);
+        let due = Utc::now() + Duration::days(3);
+        item.due_at = Some(due);
+        item.show_before_due_amount = Some(2);
+        item.show_before_due_unit = Some("days".into());
+        item.recompute_show_after();
+        assert_eq!(item.show_after, Some(due - Duration::days(2)));
+
+        // Moving the due date recomputes show_after to match.
+        let new_due = due + Duration::days(1);
+        item.due_at = Some(new_due);
+        item.recompute_show_after();
+        assert_eq!(item.show_after, Some(new_due - Duration::days(2)));
+    }
+
+    #[test]
+    fn recompute_show_after_leaves_fixed_mode_untouched() {
+        let mut item = Item::new("t".into(), false);
+        let fixed = Utc::now() + Duration::hours(1);
+        item.show_after = Some(fixed);
+        item.due_at = Some(Utc::now() + Duration::days(1));
+        item.recompute_show_after();
+        assert_eq!(item.show_after, Some(fixed));
+    }
+
+    #[test]
+    fn recompute_hide_after_derives_from_created_at() {
+        let mut item = Item::new("t".into(), false);
+        item.hide_after_created_amount = Some(30);
+        item.hide_after_created_unit = Some("minutes".into());
+        item.recompute_hide_after();
+        assert_eq!(item.hide_after, Some(item.created_at + Duration::minutes(30)));
+    }
+
+    #[test]
+    fn advance_recurrence_unmarks_done_and_moves_due_date() {
+        let mut item = Item::new("t".into(), false);
+        let due = Utc::now() + Duration::days(1);
+        item.due_at = Some(due);
+        item.done = true;
+        item.recur_amount = Some(1);
+        item.recur_unit = Some("weeks".into());
+
+        assert!(item.advance_recurrence(Utc::now()));
+        assert!(!item.done);
+        assert_eq!(item.due_at, Some(due + Duration::weeks(1)));
+    }
+
+    #[test]
+    fn advance_recurrence_uses_now_when_never_had_a_due_date() {
+        let mut item = Item::new("t".into(), false);
+        item.recur_amount = Some(2);
+        item.recur_unit = Some("days".into());
+        let now = Utc::now();
+
+        assert!(item.advance_recurrence(now));
+        assert_eq!(item.due_at, Some(now + Duration::days(2)));
+    }
+
+    #[test]
+    fn advance_recurrence_noop_without_recurrence_set() {
+        let mut item = Item::new("t".into(), false);
+        assert!(!item.advance_recurrence(Utc::now()));
+        assert_eq!(item.due_at, None);
     }
 }

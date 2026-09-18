@@ -41,20 +41,6 @@ fn list_icon() -> Html {
     }
 }
 
-/// Six-dot grip handle used to drag-reorder a row.
-fn drag_handle_icon() -> Html {
-    html! {
-        <svg viewBox="0 0 16 16" width="12" height="16" aria-hidden="true">
-            <circle cx="5" cy="3" r="1.2" fill="currentColor"/>
-            <circle cx="5" cy="8" r="1.2" fill="currentColor"/>
-            <circle cx="5" cy="13" r="1.2" fill="currentColor"/>
-            <circle cx="11" cy="3" r="1.2" fill="currentColor"/>
-            <circle cx="11" cy="8" r="1.2" fill="currentColor"/>
-            <circle cx="11" cy="13" r="1.2" fill="currentColor"/>
-        </svg>
-    }
-}
-
 fn menu_icon() -> Html {
     html! {
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -150,6 +136,64 @@ fn copy_icon() -> Html {
 
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// Formats a `DateTime<Utc>` for a `<input type="datetime-local">` value (local time,
+/// no timezone/seconds), and parses one back. Both directions go through the JS `Date`
+/// object so the conversion follows the browser's own local timezone.
+fn to_datetime_local_value(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let js_date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(dt.timestamp_millis() as f64));
+    let pad = |n: i32| format!("{n:02}");
+    format!(
+        "{}-{}-{}T{}:{}",
+        js_date.get_full_year(),
+        pad(js_date.get_month() as i32 + 1),
+        pad(js_date.get_date() as i32),
+        pad(js_date.get_hours() as i32),
+        pad(js_date.get_minutes() as i32),
+    )
+}
+
+fn from_datetime_local_value(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    let js_date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(value));
+    let millis = js_date.get_time();
+    if millis.is_nan() {
+        return None;
+    }
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis as i64)
+}
+
+/// Closes `open` on the next mousedown/touchstart that lands outside `node_ref`'s
+/// element - lets any dropdown menu dismiss itself when the user clicks elsewhere,
+/// instead of staying open until something explicitly closes it.
+#[hook]
+fn use_click_outside(node_ref: NodeRef, open: UseStateHandle<bool>) {
+    use_effect_with(*open, move |is_open| {
+        if !*is_open {
+            return Box::new(|| ()) as Box<dyn FnOnce()>;
+        }
+        let node_ref = node_ref.clone();
+        let open = open.clone();
+        let listener = gloo_events::EventListener::new(
+            &web_sys::window().unwrap(),
+            "mousedown",
+            move |e: &web_sys::Event| {
+                let Some(target) = e.target() else { return };
+                let Ok(target_node) = target.dyn_into::<web_sys::Node>() else { return };
+                let inside = node_ref
+                    .get()
+                    .map(|el| el.contains(Some(&target_node)))
+                    .unwrap_or(false);
+                if !inside {
+                    open.set(false);
+                }
+            },
+        );
+        Box::new(move || drop(listener)) as Box<dyn FnOnce()>
+    });
 }
 
 #[derive(Properties, PartialEq)]
@@ -303,6 +347,67 @@ impl ItemKind {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ShowMode {
+    Always,
+    BeforeDue,
+    Fixed,
+}
+
+impl ShowMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ShowMode::Always => "always",
+            ShowMode::BeforeDue => "before_due",
+            ShowMode::Fixed => "fixed",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "before_due" => ShowMode::BeforeDue,
+            "fixed" => ShowMode::Fixed,
+            _ => ShowMode::Always,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum HideMode {
+    Never,
+    AfterCreated,
+    Fixed,
+}
+
+impl HideMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            HideMode::Never => "never",
+            HideMode::AfterCreated => "after_created",
+            HideMode::Fixed => "fixed",
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
+        match s {
+            "after_created" => HideMode::AfterCreated,
+            "fixed" => HideMode::Fixed,
+            _ => HideMode::Never,
+        }
+    }
+}
+
+/// `<select>` of the time units usable for a show/hide offset or a recurrence interval.
+fn time_unit_select(value: &str, onchange: Callback<Event>) -> Html {
+    html! {
+        <select class="unit-select" {onchange} value={value.to_string()}>
+            { for shared::TIME_UNITS.iter().map(|unit| {
+                html! { <option value={*unit} selected={value == *unit}>{ *unit }</option> }
+            }) }
+        </select>
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub struct SessionButtonProps {
     pub user: Option<auth::User>,
@@ -324,6 +429,8 @@ pub struct SessionButtonProps {
 #[function_component(SessionButton)]
 pub fn session_button(props: &SessionButtonProps) -> Html {
     let open = use_state(|| false);
+    let root_ref = use_node_ref();
+    use_click_outside(root_ref.clone(), open.clone());
     let never_logged_in = !props.has_logged_in && props.user.is_none();
 
     let toggle = {
@@ -369,7 +476,7 @@ pub fn session_button(props: &SessionButtonProps) -> Html {
     };
 
     html! {
-        <div class="session-menu">
+        <div class="session-menu" ref={root_ref}>
             <button
                 class={btn_class}
                 onclick={toggle}
@@ -681,6 +788,13 @@ pub struct ItemRowProps {
     pub on_drag_start: Callback<Uuid>,
     pub on_drag_hover: Callback<Option<DragHoverTarget>>,
     pub on_drag_end: Callback<()>,
+    /// Nesting depth relative to the list currently being viewed: 0 for a direct child
+    /// (the normal case), or more when the list has "show nested children" on and this
+    /// row is a deeper descendant. Deeper rows are indented and, since dropping onto them
+    /// for reorder/nest would silently misplace an item relative to its real parent,
+    /// aren't drag sources or drop targets.
+    #[prop_or(0)]
+    pub depth: usize,
 }
 
 #[function_component(ItemRow)]
@@ -741,13 +855,14 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     // (see `.item-main { touch-action: none }`) so we can time that hold, and if the
     // finger moves before it elapses we scroll the page manually instead, so scrolling a
     // list that starts on an item still works.
+    let interactive_drag = props.depth == 0;
     let on_pointer_down = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
         let on_drag_start = props.on_drag_start.clone();
         let membership_id = membership.id;
         Callback::from(move |e: PointerEvent| {
-            if e.button() != 0 {
+            if !interactive_drag || e.button() != 0 {
                 return;
             }
             let is_touch = e.pointer_type() == "touch" || e.pointer_type() == "pen";
@@ -926,20 +1041,26 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         item.done.then_some("done"),
         (!membership.visible).then_some("hidden-row"),
         is_hover_target.then_some("drag-over"),
-        is_dragging_this.then_some("dragging")
+        is_dragging_this.then_some("dragging"),
+        (props.depth > 0).then_some("nested-row")
     );
+    // A nested row's own true parent differs from the list currently being viewed, so it
+    // isn't a valid drag source or drop target (see `interactive_drag` above) - dropping
+    // onto one would silently misplace an item relative to its real parent.
+    let membership_attr = interactive_drag.then(|| membership.id.to_string());
+    let indent_style = (props.depth > 0).then(|| format!("padding-left: {}ch;", props.depth));
 
     html! {
-        <li class={row_class} data-membership-id={membership.id.to_string()}>
+        <li class={row_class} data-membership-id={membership_attr}>
             <div
                 class="item-main"
+                style={indent_style}
                 onclick={open_or_edit}
                 onpointerdown={on_pointer_down}
                 onpointermove={on_pointer_move}
                 onpointerup={on_pointer_up}
                 onpointercancel={on_pointer_cancel}
             >
-                <span class="drag-handle" aria-hidden="true">{ drag_handle_icon() }</span>
                 if item.is_note {
                     { note_icon() }
                 } else if is_list {
@@ -961,7 +1082,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 if child_count > 0 {
                     <span class="child-count">{ child_count }</span>
                 }
-                if drag_active && !is_dragging_this {
+                if drag_active && !is_dragging_this && interactive_drag {
                     <span
                         class={classes!("nest-target", is_nest_hover.then_some("drag-over"))}
                         title="Drop to move inside"
@@ -1010,6 +1131,58 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     let confirm_remove = use_state(|| false);
     let remove_children = use_state(|| true);
 
+    let due_input = use_state(|| item.due_at.map(to_datetime_local_value).unwrap_or_default());
+
+    let show_mode = use_state(|| {
+        if item.show_before_due_amount.is_some() && item.show_before_due_unit.is_some() {
+            ShowMode::BeforeDue
+        } else if item.show_after.is_some() {
+            ShowMode::Fixed
+        } else {
+            ShowMode::Always
+        }
+    });
+    let show_amount = use_state(|| item.show_before_due_amount.unwrap_or(1).to_string());
+    let show_unit = use_state(|| {
+        item.show_before_due_unit
+            .clone()
+            .unwrap_or_else(|| "days".to_string())
+    });
+    let show_fixed_input = use_state(|| {
+        (*show_mode == ShowMode::Fixed)
+            .then(|| item.show_after)
+            .flatten()
+            .map(to_datetime_local_value)
+            .unwrap_or_default()
+    });
+
+    let hide_mode = use_state(|| {
+        if item.hide_after_created_amount.is_some() && item.hide_after_created_unit.is_some() {
+            HideMode::AfterCreated
+        } else if item.hide_after.is_some() {
+            HideMode::Fixed
+        } else {
+            HideMode::Never
+        }
+    });
+    let hide_amount = use_state(|| item.hide_after_created_amount.unwrap_or(1).to_string());
+    let hide_unit = use_state(|| {
+        item.hide_after_created_unit
+            .clone()
+            .unwrap_or_else(|| "days".to_string())
+    });
+    let hide_fixed_input = use_state(|| {
+        (*hide_mode == HideMode::Fixed)
+            .then(|| item.hide_after)
+            .flatten()
+            .map(to_datetime_local_value)
+            .unwrap_or_default()
+    });
+
+    let recur_enabled = use_state(|| item.recur_amount.is_some() && item.recur_unit.is_some());
+    let recur_amount = use_state(|| item.recur_amount.unwrap_or(1).to_string());
+    let recur_unit = use_state(|| item.recur_unit.clone().unwrap_or_else(|| "days".to_string()));
+
     let on_text_input = {
         let text = text.clone();
         Callback::from(move |e: InputEvent| {
@@ -1028,6 +1201,100 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 large_notes.set(true);
             }
             notes.set(value);
+        })
+    };
+
+    let on_due_input = {
+        let due_input = due_input.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            due_input.set(input.value());
+        })
+    };
+    let on_show_mode_change = {
+        let show_mode = show_mode.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            show_mode.set(ShowMode::from_str(&select.value()));
+        })
+    };
+    let on_show_amount_input = {
+        let show_amount = show_amount.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            show_amount.set(input.value());
+        })
+    };
+    let on_show_unit_change = {
+        let show_unit = show_unit.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            show_unit.set(select.value());
+        })
+    };
+    let on_show_fixed_input = {
+        let show_fixed_input = show_fixed_input.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            show_fixed_input.set(input.value());
+        })
+    };
+    let on_hide_mode_change = {
+        let hide_mode = hide_mode.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            hide_mode.set(HideMode::from_str(&select.value()));
+        })
+    };
+    let on_hide_amount_input = {
+        let hide_amount = hide_amount.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            hide_amount.set(input.value());
+        })
+    };
+    let on_hide_unit_change = {
+        let hide_unit = hide_unit.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            hide_unit.set(select.value());
+        })
+    };
+    let on_hide_fixed_input = {
+        let hide_fixed_input = hide_fixed_input.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            hide_fixed_input.set(input.value());
+        })
+    };
+    let on_recur_enabled_click = {
+        let recur_enabled = recur_enabled.clone();
+        Callback::from(move |_: MouseEvent| recur_enabled.set(!*recur_enabled))
+    };
+    let on_recur_amount_input = {
+        let recur_amount = recur_amount.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            recur_amount.set(input.value());
+        })
+    };
+    let on_recur_unit_change = {
+        let recur_unit = recur_unit.clone();
+        Callback::from(move |e: Event| {
+            let select: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            recur_unit.set(select.value());
+        })
+    };
+
+    let toggle_nested_children = {
+        let state = state.clone();
+        let id = item.id;
+        let current = item.show_nested_children;
+        Callback::from(move |_: MouseEvent| {
+            state.dispatch(Action::SetShowNestedChildren {
+                item_id: id,
+                value: !current,
+            })
         })
     };
 
@@ -1050,6 +1317,18 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         let id = item.id;
         let text = text.clone();
         let notes = notes.clone();
+        let due_input = due_input.clone();
+        let show_mode = show_mode.clone();
+        let show_amount = show_amount.clone();
+        let show_unit = show_unit.clone();
+        let show_fixed_input = show_fixed_input.clone();
+        let hide_mode = hide_mode.clone();
+        let hide_amount = hide_amount.clone();
+        let hide_unit = hide_unit.clone();
+        let hide_fixed_input = hide_fixed_input.clone();
+        let recur_enabled = recur_enabled.clone();
+        let recur_amount = recur_amount.clone();
+        let recur_unit = recur_unit.clone();
         let on_close = props.on_close.clone();
         Callback::from(move |_: MouseEvent| {
             let trimmed = text.trim().to_string();
@@ -1063,6 +1342,47 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 item_id: id,
                 notes: (*notes).clone(),
             });
+
+            let due_at = from_datetime_local_value(&due_input);
+            let mut update = crate::state::ScheduleUpdate {
+                due_at,
+                ..Default::default()
+            };
+            match *show_mode {
+                ShowMode::Always => {}
+                ShowMode::BeforeDue => {
+                    if let Ok(amount) = show_amount.parse::<i64>() {
+                        update.show_before_due_amount = Some(amount);
+                        update.show_before_due_unit = Some((*show_unit).clone());
+                    }
+                }
+                ShowMode::Fixed => {
+                    update.show_at_fixed = from_datetime_local_value(&show_fixed_input);
+                }
+            }
+            match *hide_mode {
+                HideMode::Never => {}
+                HideMode::AfterCreated => {
+                    if let Ok(amount) = hide_amount.parse::<i64>() {
+                        update.hide_after_created_amount = Some(amount);
+                        update.hide_after_created_unit = Some((*hide_unit).clone());
+                    }
+                }
+                HideMode::Fixed => {
+                    update.hide_at_fixed = from_datetime_local_value(&hide_fixed_input);
+                }
+            }
+            if *recur_enabled {
+                if let Ok(amount) = recur_amount.parse::<i64>() {
+                    update.recur_amount = Some(amount);
+                    update.recur_unit = Some((*recur_unit).clone());
+                }
+            }
+            state.dispatch(Action::UpdateSchedule {
+                item_id: id,
+                update,
+            });
+
             on_close.emit(());
         })
     };
@@ -1175,6 +1495,87 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             <button onclick={convert_to(false, false)}>{ "Convert to task" }</button>
                         }
                     </div>
+                </div>
+                <div class="editor-schedule">
+                    <label class="editor-field">
+                        <span>{ "Due date" }</span>
+                        <input type="datetime-local" value={(*due_input).clone()} oninput={on_due_input} />
+                    </label>
+                    <div class="editor-schedule-row">
+                        <span>{ "Show" }</span>
+                        <select class="mode-select" onchange={on_show_mode_change} value={show_mode.as_str()}>
+                            <option value="always" selected={*show_mode == ShowMode::Always}>{ "Always" }</option>
+                            <option value="before_due" selected={*show_mode == ShowMode::BeforeDue}>{ "Before due date" }</option>
+                            <option value="fixed" selected={*show_mode == ShowMode::Fixed}>{ "At date/time" }</option>
+                        </select>
+                        if *show_mode == ShowMode::BeforeDue {
+                            <input
+                                type="number"
+                                min="0"
+                                class="amount-input"
+                                value={(*show_amount).clone()}
+                                oninput={on_show_amount_input}
+                            />
+                            { time_unit_select(&show_unit, on_show_unit_change) }
+                            <span class="editor-schedule-hint">{ "before due" }</span>
+                        } else if *show_mode == ShowMode::Fixed {
+                            <input
+                                type="datetime-local"
+                                value={(*show_fixed_input).clone()}
+                                oninput={on_show_fixed_input}
+                            />
+                        }
+                    </div>
+                    <div class="editor-schedule-row">
+                        <span>{ "Hide" }</span>
+                        <select class="mode-select" onchange={on_hide_mode_change} value={hide_mode.as_str()}>
+                            <option value="never" selected={*hide_mode == HideMode::Never}>{ "Never" }</option>
+                            <option value="after_created" selected={*hide_mode == HideMode::AfterCreated}>{ "After created" }</option>
+                            <option value="fixed" selected={*hide_mode == HideMode::Fixed}>{ "At date/time" }</option>
+                        </select>
+                        if *hide_mode == HideMode::AfterCreated {
+                            <input
+                                type="number"
+                                min="0"
+                                class="amount-input"
+                                value={(*hide_amount).clone()}
+                                oninput={on_hide_amount_input}
+                            />
+                            { time_unit_select(&hide_unit, on_hide_unit_change) }
+                        } else if *hide_mode == HideMode::Fixed {
+                            <input
+                                type="datetime-local"
+                                value={(*hide_fixed_input).clone()}
+                                oninput={on_hide_fixed_input}
+                            />
+                        }
+                    </div>
+                    <div class="editor-schedule-row">
+                        <label class="editor-schedule-recur-toggle">
+                            <input type="checkbox" checked={*recur_enabled} onclick={on_recur_enabled_click} />
+                            { " Repeats every" }
+                        </label>
+                        if *recur_enabled {
+                            <input
+                                type="number"
+                                min="1"
+                                class="amount-input"
+                                value={(*recur_amount).clone()}
+                                oninput={on_recur_amount_input}
+                            />
+                            { time_unit_select(&recur_unit, on_recur_unit_change) }
+                        }
+                    </div>
+                    if item.is_list || state.direct_child_count(item.id) > 0 {
+                        <label class="editor-schedule-recur-toggle">
+                            <input
+                                type="checkbox"
+                                checked={item.show_nested_children}
+                                onclick={toggle_nested_children}
+                            />
+                            { " Show multiple levels of children in this list" }
+                        </label>
+                    }
                 </div>
                 <div class="editor-secondary-actions">
                     if let Some(toggle_visible) = toggle_visible {
@@ -1716,6 +2117,8 @@ pub struct SettingsMenuProps {
 #[function_component(SettingsMenu)]
 pub fn settings_menu(props: &SettingsMenuProps) -> Html {
     let open = use_state(|| false);
+    let root_ref = use_node_ref();
+    use_click_outside(root_ref.clone(), open.clone());
     let file_input_ref = use_node_ref();
     let markdown_input_ref = use_node_ref();
 
@@ -1894,7 +2297,7 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
     };
 
     html! {
-        <div class="settings-menu">
+        <div class="settings-menu" ref={root_ref}>
             <button class="settings-btn" onclick={toggle} title="Menu" aria-label="Menu">
                 { menu_icon() }
             </button>
@@ -1974,6 +2377,24 @@ pub fn google_import_dialog(props: &GoogleImportDialogProps) -> Html {
         })
     };
 
+    let select_all = {
+        let selected = selected.clone();
+        let count = props.lists.len();
+        Callback::from(move |_: MouseEvent| selected.set((0..count).collect()))
+    };
+    let deselect_all = {
+        let selected = selected.clone();
+        Callback::from(move |_: MouseEvent| selected.set(HashSet::new()))
+    };
+    let invert_selection = {
+        let selected = selected.clone();
+        let count = props.lists.len();
+        Callback::from(move |_: MouseEvent| {
+            let inverted = (0..count).filter(|i| !selected.contains(i)).collect();
+            selected.set(inverted);
+        })
+    };
+
     html! {
         <div class="editor-overlay">
             <div class="editor">
@@ -1981,6 +2402,11 @@ pub fn google_import_dialog(props: &GoogleImportDialogProps) -> Html {
                 if props.lists.is_empty() {
                     <p>{ "No Google task lists were found for this account." }</p>
                 } else {
+                    <div class="google-import-select-actions">
+                        <button type="button" onclick={select_all}>{ "Select all" }</button>
+                        <button type="button" onclick={deselect_all}>{ "Deselect all" }</button>
+                        <button type="button" onclick={invert_selection}>{ "Invert" }</button>
+                    </div>
                     <ul class="google-import-lists">
                         { for props.lists.iter().enumerate().map(|(idx, list)| {
                             let is_checked = selected.contains(&idx);

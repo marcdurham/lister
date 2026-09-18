@@ -33,7 +33,10 @@ impl AppState {
     }
 
     /// Children of `parent` (or top-level lists when `parent` is None), sorted by position.
+    /// `include_hidden` bypasses both a membership's own `visible` flag and an item's
+    /// due-based show/hide window (the same "Show hidden items" toggle covers both).
     pub fn children(&self, parent: Option<Uuid>, include_hidden: bool) -> Vec<(Item, Membership)> {
+        let now = Utc::now();
         let mut rows: Vec<(Item, Membership)> = self
             .memberships
             .values()
@@ -44,11 +47,41 @@ impl AppState {
                 if item.deleted_at.is_some() {
                     return None;
                 }
+                if !include_hidden && !item.is_time_visible(now) {
+                    return None;
+                }
                 Some((item.clone(), m.clone()))
             })
             .collect();
         rows.sort_by(|a, b| a.1.position.partial_cmp(&b.1.position).unwrap());
         rows
+    }
+
+    /// Like `children`, but also includes every deeper descendant level, each tagged with
+    /// its depth relative to `parent` (1 for a direct child, 2 for a grandchild, etc.) -
+    /// used when a list has "show nested children" enabled.
+    pub fn children_recursive(
+        &self,
+        parent: Option<Uuid>,
+        include_hidden: bool,
+    ) -> Vec<(Item, Membership, usize)> {
+        let mut out = Vec::new();
+        self.push_children_recursive(parent, include_hidden, 1, &mut out);
+        out
+    }
+
+    fn push_children_recursive(
+        &self,
+        parent: Option<Uuid>,
+        include_hidden: bool,
+        depth: usize,
+        out: &mut Vec<(Item, Membership, usize)>,
+    ) {
+        for (item, membership) in self.children(parent, include_hidden) {
+            let item_id = item.id;
+            out.push((item.clone(), membership, depth));
+            self.push_children_recursive(Some(item_id), include_hidden, depth + 1, out);
+        }
     }
 
     /// Any live membership id for this item - used to open the item editor for an item
@@ -161,6 +194,24 @@ impl AppState {
     }
 }
 
+/// Pending edits to an item's due date, show/hide windows, and recurrence, applied in
+/// one shot from the item editor. Each "mode" is represented by which optional fields are
+/// set: for show, either both `show_before_due_amount`/`unit` (before-due mode) or just
+/// `show_at_fixed` (fixed mode) or neither (always visible); for hide, the equivalent
+/// with `hide_after_created_amount`/`unit` / `hide_at_fixed` / neither.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScheduleUpdate {
+    pub due_at: Option<chrono::DateTime<Utc>>,
+    pub show_before_due_amount: Option<i64>,
+    pub show_before_due_unit: Option<String>,
+    pub show_at_fixed: Option<chrono::DateTime<Utc>>,
+    pub hide_after_created_amount: Option<i64>,
+    pub hide_after_created_unit: Option<String>,
+    pub hide_at_fixed: Option<chrono::DateTime<Utc>>,
+    pub recur_amount: Option<i64>,
+    pub recur_unit: Option<String>,
+}
+
 pub enum Action {
     Reload,
     AddItem {
@@ -175,6 +226,14 @@ pub enum Action {
         notes: String,
     },
     ToggleVisible(Uuid),
+    UpdateSchedule {
+        item_id: Uuid,
+        update: ScheduleUpdate,
+    },
+    SetShowNestedChildren {
+        item_id: Uuid,
+        value: bool,
+    },
     RemoveMembership(Uuid),
     /// Move `membership_id` so it sits immediately before `before_id` in the same list.
     MoveBefore {
@@ -255,8 +314,15 @@ impl Reducible for AppState {
             Action::ToggleDone(item_id) => {
                 let mut next = (*self).clone();
                 if let Some(item) = next.items.get_mut(&item_id) {
-                    item.done = !item.done;
-                    item.updated_at = Utc::now();
+                    let now = Utc::now();
+                    // A recurring task never stays done: marking it done instead advances
+                    // its due date and pops back up as a fresh, unmarked instance.
+                    if !item.done && item.recur_amount.is_some() {
+                        item.advance_recurrence(now);
+                    } else {
+                        item.done = !item.done;
+                    }
+                    item.updated_at = now;
                     store::put_item(item.clone());
                 }
                 Rc::new(next)
@@ -280,6 +346,34 @@ impl Reducible for AppState {
                     m.visible = !m.visible;
                     m.updated_at = Utc::now();
                     store::put_membership(m.clone());
+                }
+                Rc::new(next)
+            }
+            Action::UpdateSchedule { item_id, update } => {
+                let mut next = (*self).clone();
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    item.due_at = update.due_at;
+                    item.show_before_due_amount = update.show_before_due_amount;
+                    item.show_before_due_unit = update.show_before_due_unit;
+                    item.show_after = update.show_at_fixed;
+                    item.hide_after_created_amount = update.hide_after_created_amount;
+                    item.hide_after_created_unit = update.hide_after_created_unit;
+                    item.hide_after = update.hide_at_fixed;
+                    item.recur_amount = update.recur_amount;
+                    item.recur_unit = update.recur_unit;
+                    item.recompute_show_after();
+                    item.recompute_hide_after();
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
+                }
+                Rc::new(next)
+            }
+            Action::SetShowNestedChildren { item_id, value } => {
+                let mut next = (*self).clone();
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    item.show_nested_children = value;
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
                 }
                 Rc::new(next)
             }

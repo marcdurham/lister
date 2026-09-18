@@ -322,11 +322,23 @@ fn app() -> Html {
     let unsynced_count = if state.online { 0 } else { store::unsynced_count() };
 
     let current_parent = path.last().copied();
-    let mut rows = state.children(current_parent, *show_hidden);
+    let nested_mode = current_parent
+        .and_then(|id| state.items.get(&id))
+        .map(|i| i.show_nested_children)
+        .unwrap_or(false);
+    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if nested_mode {
+        state.children_recursive(current_parent, *show_hidden)
+    } else {
+        state
+            .children(current_parent, *show_hidden)
+            .into_iter()
+            .map(|(item, membership)| (item, membership, 0))
+            .collect()
+    };
     if let Some(query) = (*search).as_deref() {
         let query_lower = query.trim().to_lowercase();
         if !query_lower.is_empty() {
-            rows.retain(|(item, _)| item.text.to_lowercase().contains(&query_lower));
+            rows.retain(|(item, _, _)| item.text.to_lowercase().contains(&query_lower));
         }
     }
 
@@ -414,7 +426,7 @@ fn app() -> Html {
                             </div>
                         </li>
                     }
-                    { for rows.iter().map(|(item, membership)| {
+                    { for rows.iter().map(|(item, membership, depth)| {
                         html! {
                             <ItemRow
                                 key={membership.id.to_string()}
@@ -429,6 +441,7 @@ fn app() -> Html {
                                 on_drag_start={on_drag_start.clone()}
                                 on_drag_hover={on_drag_hover.clone()}
                                 on_drag_end={on_drag_end.clone()}
+                                depth={*depth}
                             />
                         }
                     }) }

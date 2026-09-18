@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO items (\n            id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id,\n            due_at, show_after, show_before_due_amount, show_before_due_unit,\n            hide_after, hide_after_created_amount, hide_after_created_unit,\n            recur_amount, recur_unit, show_nested_children\n        )\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)\n        ON CONFLICT (id) DO UPDATE SET\n            text = EXCLUDED.text,\n            notes = EXCLUDED.notes,\n            is_note = EXCLUDED.is_note,\n            is_list = EXCLUDED.is_list,\n            done = EXCLUDED.done,\n            updated_at = EXCLUDED.updated_at,\n            deleted_at = EXCLUDED.deleted_at,\n            due_at = EXCLUDED.due_at,\n            show_after = EXCLUDED.show_after,\n            show_before_due_amount = EXCLUDED.show_before_due_amount,\n            show_before_due_unit = EXCLUDED.show_before_due_unit,\n            hide_after = EXCLUDED.hide_after,\n            hide_after_created_amount = EXCLUDED.hide_after_created_amount,\n            hide_after_created_unit = EXCLUDED.hide_after_created_unit,\n            recur_amount = EXCLUDED.recur_amount,\n            recur_unit = EXCLUDED.recur_unit,\n            show_nested_children = EXCLUDED.show_nested_children\n        WHERE items.updated_at < EXCLUDED.updated_at AND items.owner_id = EXCLUDED.owner_id\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz",
+        "Int8",
+        "Text",
+        "Timestamptz",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "604f1d89eeb59632b2b72c09c8fc206f84734a7cc8db0b884ee8c5924489b9a7"
+}

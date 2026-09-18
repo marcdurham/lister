@@ -104,3 +104,31 @@
   currently viewing (top-level if you're at the root "Lists" screen), instead of always
   adding new top-level lists. The imported item is named after the file (its `.md`/
   `.markdown` extension stripped), and everything the file parsed into is nested under it.
+
+## 2026-09-17 17:42 PDT
+- Removed the six-dot grip icon from item rows (dragging still works by pressing anywhere
+  on the row, so the icon wasn't needed).
+- Added "Select all" / "Deselect all" / "Invert" buttons to the Google Tasks import dialog.
+- Any open dropdown menu (the header's hamburger menu and the online/session menu) now
+  closes as soon as you click or tap anywhere outside it, instead of staying open until
+  something explicitly closed it.
+- Added a per-list "Show multiple levels of children in this list" setting (in that list's
+  own item editor): when on, the list view shows every descendant level, not just direct
+  children, each level indented about one character further. Dragging is disabled on those
+  deeper rows (their real parent differs from the list being viewed, so dropping onto them
+  can't correctly reorder/nest) but tapping to open/edit/check them off still works.
+- Added due dates, time-gated visibility, and recurrence to items, editable from the item
+  editor's new "Due date"/"Show"/"Hide"/"Repeats every" fields:
+  - A due date, plus a "Show" mode that keeps an item out of the list entirely until
+    either a fixed date/time or a chosen amount of time before its due date.
+  - A "Hide" mode that removes an item from the list either at a fixed date/time or a
+    chosen amount of time after it was created.
+  - "Show hidden items" now also reveals items that are outside their show/hide window
+    (as well as its previous membership-`visible` meaning), so you can preview what's
+    scheduled or expired.
+  - Recurring tasks: checking a task with "Repeats every" set doesn't mark it done - it
+    stays unchecked and its due date jumps forward by the configured interval instead.
+  - New `shared::Item` fields (`due_at`, `show_after`, `show_before_due_amount/unit`,
+    `hide_after`, `hide_after_created_amount/unit`, `recur_amount/unit`,
+    `show_nested_children`) sync to the backend like any other item field; migration
+    `0005_scheduling.sql` adds the matching columns.

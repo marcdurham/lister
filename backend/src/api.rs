@@ -14,8 +14,13 @@ fn epoch() -> DateTime<Utc> {
 async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result<()> {
     sqlx::query!(
         r#"
-        INSERT INTO items (id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        INSERT INTO items (
+            id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id,
+            due_at, show_after, show_before_due_amount, show_before_due_unit,
+            hide_after, hide_after_created_amount, hide_after_created_unit,
+            recur_amount, recur_unit, show_nested_children
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         ON CONFLICT (id) DO UPDATE SET
             text = EXCLUDED.text,
             notes = EXCLUDED.notes,
@@ -23,7 +28,17 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
             is_list = EXCLUDED.is_list,
             done = EXCLUDED.done,
             updated_at = EXCLUDED.updated_at,
-            deleted_at = EXCLUDED.deleted_at
+            deleted_at = EXCLUDED.deleted_at,
+            due_at = EXCLUDED.due_at,
+            show_after = EXCLUDED.show_after,
+            show_before_due_amount = EXCLUDED.show_before_due_amount,
+            show_before_due_unit = EXCLUDED.show_before_due_unit,
+            hide_after = EXCLUDED.hide_after,
+            hide_after_created_amount = EXCLUDED.hide_after_created_amount,
+            hide_after_created_unit = EXCLUDED.hide_after_created_unit,
+            recur_amount = EXCLUDED.recur_amount,
+            recur_unit = EXCLUDED.recur_unit,
+            show_nested_children = EXCLUDED.show_nested_children
         WHERE items.updated_at < EXCLUDED.updated_at AND items.owner_id = EXCLUDED.owner_id
         "#,
         item.id,
@@ -36,6 +51,16 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
         item.updated_at,
         item.deleted_at,
         owner_id,
+        item.due_at,
+        item.show_after,
+        item.show_before_due_amount,
+        item.show_before_due_unit,
+        item.hide_after,
+        item.hide_after_created_amount,
+        item.hide_after_created_unit,
+        item.recur_amount,
+        item.recur_unit,
+        item.show_nested_children,
     )
     .execute(pool)
     .await?;
@@ -110,7 +135,10 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
 
     let items = match sqlx::query_as!(
         Item,
-        r#"SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at
+        r#"SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at,
+                  due_at, show_after, show_before_due_amount, show_before_due_unit,
+                  hide_after, hide_after_created_amount, hide_after_created_unit,
+                  recur_amount, recur_unit, show_nested_children
            FROM items WHERE updated_at > $1 AND owner_id = $2"#,
         since,
         owner_id,
