@@ -132,3 +132,11 @@
     `hide_after`, `hide_after_created_amount/unit`, `recur_amount/unit`,
     `show_nested_children`) sync to the backend like any other item field; migration
     `0005_scheduling.sql` adds the matching columns.
+
+## 2026-09-17 18:02 PDT
+- Items with a scheduled "Show"/"Hide" time now appear/disappear on their own instead of
+  only when something else triggers a re-render (an edit, the 30s sync, or a page
+  refresh). Added a `visibility_tick_loop` that dispatches a no-op `Action::Tick` every
+  30s purely to force re-evaluation of each item's show/hide window against the current
+  time; unlike the sync loop it also runs while offline, so this works for a guest who's
+  never logged in too.

@@ -214,6 +214,10 @@ pub struct ScheduleUpdate {
 
 pub enum Action {
     Reload,
+    /// No-op state change used purely to force a re-render, so items whose due-based
+    /// show/hide window has just opened or closed appear/disappear on their own instead
+    /// of waiting for the next real edit or a page refresh - see `main::visibility_tick_loop`.
+    Tick,
     AddItem {
         text: String,
         is_note: bool,
@@ -288,6 +292,7 @@ impl Reducible for AppState {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         match action {
             Action::Reload => Rc::new(AppState::load()),
+            Action::Tick => Rc::new((*self).clone()),
             Action::AddItem {
                 text,
                 is_note,

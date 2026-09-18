@@ -22,6 +22,11 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 const SYNC_INTERVAL_MS: u32 = 30_000;
+/// How often to force a re-render purely so due-based show/hide windows (see
+/// `shared::Item::is_time_visible`) get re-evaluated against the current time - without
+/// this, an item would only appear/disappear on the next real edit, sync, or page
+/// refresh, and offline that could be a very long wait.
+const VISIBILITY_TICK_MS: u32 = 30_000;
 
 /// Encode a navigation path into the value stored in `history.state`.
 fn path_to_js(path: &[Uuid]) -> JsValue {
@@ -159,6 +164,7 @@ fn app() -> Html {
             };
 
             spawn_local(sync_loop(state.clone()));
+            spawn_local(visibility_tick_loop(state.clone()));
 
             move || {
                 drop(online_listener);
@@ -460,6 +466,16 @@ fn app() -> Html {
                 />
             }
         </div>
+    }
+}
+
+/// Runs regardless of online/offline status (unlike `sync_loop`, which only does
+/// anything while online) so scheduled show/hide changes still take effect on their own
+/// for a guest who's never logged in.
+async fn visibility_tick_loop(state: UseReducerHandle<AppState>) {
+    loop {
+        TimeoutFuture::new(VISIBILITY_TICK_MS).await;
+        state.dispatch(Action::Tick);
     }
 }
 
