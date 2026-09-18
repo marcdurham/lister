@@ -513,7 +513,13 @@ fn app() -> Html {
             } else if *show_trash {
                 <TrashView state={state.clone()} on_close={close_trash} />
             } else {
-                <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />
+                <Breadcrumbs
+                    state={state.clone()}
+                    path={(*path).clone()}
+                    on_navigate={on_navigate}
+                    dragging={dragging.is_some()}
+                    hover_nest_item={*hover_nest_item}
+                />
                 if let Some(parent_item) = current_parent.and_then(|id| state.items.get(&id).cloned()) {
                     <ListHeader
                         item={parent_item.clone()}

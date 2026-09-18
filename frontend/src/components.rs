@@ -745,6 +745,15 @@ pub struct BreadcrumbsProps {
     pub state: UseReducerHandle<AppState>,
     pub path: Vec<Uuid>,
     pub on_navigate: Callback<Vec<Uuid>>,
+    /// Whether an item is currently being dragged, so a breadcrumb can offer itself as a
+    /// drop target - letting the item be nested onto an ancestor list further up than the
+    /// one currently being viewed.
+    #[prop_or_default]
+    pub dragging: bool,
+    /// Which item (if any) the drag is currently hovering, shared across breadcrumbs and
+    /// rows so the hovered breadcrumb can highlight.
+    #[prop_or_default]
+    pub hover_nest_item: Option<Uuid>,
 }
 
 #[function_component(Breadcrumbs)]
@@ -763,10 +772,16 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
                 let on_navigate = props.on_navigate.clone();
                 let target: Vec<Uuid> = path[..=idx].to_vec();
                 let onclick = Callback::from(move |_: MouseEvent| on_navigate.emit(target.clone()));
+                let is_nest_hover = props.hover_nest_item == Some(*id);
+                let class = classes!(
+                    props.dragging.then_some("nest-target"),
+                    is_nest_hover.then_some("drag-over")
+                );
+                let drop_item = props.dragging.then(|| id.to_string());
                 html! {
                     <>
                         <span class="sep">{ "›" }</span>
-                        <a {onclick}>{ name }</a>
+                        <a {class} {onclick} data-drop-item={drop_item}>{ name }</a>
                     </>
                 }
             }) }

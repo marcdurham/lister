@@ -312,6 +312,21 @@ header {
     color: #9aa5b1;
 }
 
+/* While an item is being dragged, each breadcrumb becomes a valid drop target so the
+   item can be nested onto any ancestor list, not just the one currently open. */
+.breadcrumbs a.nest-target {
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    outline: 1px dashed #1f6feb;
+    outline-offset: 1px;
+}
+
+.breadcrumbs a.nest-target.drag-over {
+    background: rgba(31, 111, 235, 0.55);
+    color: white;
+    outline-style: solid;
+}
+
 .composer {
     display: flex;
     gap: 0.4rem;
