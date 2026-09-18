@@ -381,6 +381,46 @@ fn app() -> Html {
         _ => None,
     };
 
+    // The whole list is built as one child-per-key vector rather than as a mix of `if`
+    // blocks and a `for` inside the markup. Yew only *moves* a keyed child when it sees
+    // the enclosing list as fully keyed; a single unkeyed sibling (or an `if` that
+    // rendered nothing) drops it back to diffing by position, which destroys and rebuilds
+    // every row whose index changed - and that would tear down the dragged row mid-drag,
+    // taking its pointer-gesture state with it.
+    let mut list_children: Vec<Html> = Vec::with_capacity(display_rows.len() + 2);
+    if current_parent.is_some() {
+        list_children.push(html! {
+            <li class="item up-item" key="up" onclick={on_go_up.clone()}>
+                <div class="item-main">
+                    <span class="item-text">{ ".." }</span>
+                </div>
+            </li>
+        });
+    }
+    for (item, membership, depth) in display_rows.iter() {
+        list_children.push(html! {
+            <ItemRow
+                key={membership.id.to_string()}
+                state={state.clone()}
+                item={item.clone()}
+                membership={membership.clone()}
+                on_open={on_open.clone()}
+                on_edit={on_edit.clone()}
+                dragging={*dragging}
+                hover_nest_item={*hover_nest_item}
+                on_drag_start={on_drag_start.clone()}
+                on_drag_hover={on_drag_hover.clone()}
+                on_drag_end={on_drag_end.clone()}
+                depth={*depth}
+            />
+        });
+    }
+    if dragging.is_some() {
+        list_children.push(html! {
+            <li key="drop-gap" class={classes!("drop-gap", (*hover_end).then_some("drag-over"))}></li>
+        });
+    }
+
     html! {
         <div class="app">
             <header>
@@ -450,36 +490,7 @@ fn app() -> Html {
                     </label>
                     <button class="copy-list-btn" onclick={copy_list}>{ "Copy list" }</button>
                 </div>
-                <ul class="items">
-                    if current_parent.is_some() {
-                        <li class="item up-item" onclick={on_go_up}>
-                            <div class="item-main">
-                                <span class="item-text">{ ".." }</span>
-                            </div>
-                        </li>
-                    }
-                    { for display_rows.iter().map(|(item, membership, depth)| {
-                        html! {
-                            <ItemRow
-                                key={membership.id.to_string()}
-                                state={state.clone()}
-                                item={item.clone()}
-                                membership={membership.clone()}
-                                on_open={on_open.clone()}
-                                on_edit={on_edit.clone()}
-                                dragging={*dragging}
-                                hover_nest_item={*hover_nest_item}
-                                on_drag_start={on_drag_start.clone()}
-                                on_drag_hover={on_drag_hover.clone()}
-                                on_drag_end={on_drag_end.clone()}
-                                depth={*depth}
-                            />
-                        }
-                    }) }
-                    if dragging.is_some() {
-                        <li class={classes!("drop-gap", (*hover_end).then_some("drag-over"))}></li>
-                    }
-                </ul>
+                <ul class="items">{ for list_children }</ul>
                 if rows.is_empty() {
                     <p class="empty">{ "Nothing here yet - add an item above." }</p>
                 }

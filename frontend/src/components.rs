@@ -5,6 +5,7 @@ use crate::google::{self, ImportedTaskList};
 use crate::markdown;
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
+use gloo_events::{EventListener, EventListenerOptions};
 use gloo_timers::callback::{Interval, Timeout};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -804,6 +805,9 @@ const TOUCH_HOLD_MS: u32 = 280;
 /// Movement (px) during the hold window that means "this is a scroll, not a hold".
 const TOUCH_CANCEL_THRESHOLD: f64 = 10.0;
 
+/// How often an active drag's auto-scroll advances the page.
+const AUTOSCROLL_TICK_MS: u32 = 16;
+
 #[derive(Clone)]
 struct DragTracker {
     pointer_id: i32,
@@ -817,27 +821,59 @@ struct DragTracker {
     /// The touch moved before the hold elapsed, so we're manually scrolling the page
     /// instead (native touch scrolling is disabled on the row so the hold can be timed).
     scrolling: bool,
+    /// Where the row would land right now - the same slot the list is previewing, and
+    /// what the drop commits, so releasing always does what the screen showed.
+    last_target: Option<DragHoverTarget>,
 }
 
-/// Find whatever row (or nest chevron) is visually under the given viewport point.
+/// Works out where the dragged row would land if the pointer were released at `(x, y)`.
+///
+/// Another row's chevron wins outright, since that's an explicit "put it inside this
+/// one". Otherwise the slot is measured geometrically: the row goes before the first
+/// other row whose midpoint sits below the pointer, or at the end when the pointer is
+/// past them all. It has to be measured rather than hit-tested, because the list
+/// previews the drop by moving the dragged row into the slot - so from the first preview
+/// onwards, whatever is under the pointer is the dragged row itself.
 fn hover_target_at(x: f64, y: f64, dragged_membership_id: Uuid) -> Option<DragHoverTarget> {
     let doc = web_sys::window()?.document()?;
-    let el = doc.element_from_point(x as f32, y as f32)?;
-    if let Ok(Some(nest)) = el.closest(".nest-target") {
-        let item_id = nest.get_attribute("data-drop-item")?;
-        return Uuid::parse_str(&item_id).ok().map(DragHoverTarget::Nest);
+    if let Some(el) = doc.element_from_point(x as f32, y as f32) {
+        if let Ok(Some(nest)) = el.closest(".nest-target") {
+            if let Some(item_id) = nest
+                .get_attribute("data-drop-item")
+                .and_then(|id| Uuid::parse_str(&id).ok())
+            {
+                return Some(DragHoverTarget::Nest(item_id));
+            }
+        }
     }
-    if let Ok(Some(_)) = el.closest(".drop-gap") {
-        return Some(DragHoverTarget::End);
-    }
-    if let Ok(Some(row)) = el.closest("[data-membership-id]") {
-        let membership_id = row.get_attribute("data-membership-id")?;
-        let membership_id = Uuid::parse_str(&membership_id).ok()?;
-        if membership_id != dragged_membership_id {
+
+    // Only rows that carry a membership id are droppable (see `interactive_drag`), and
+    // they're returned in document order, which is the order they're drawn in.
+    let rows = doc.query_selector_all("li[data-membership-id]").ok()?;
+    let mut saw_other_row = false;
+    for index in 0..rows.length() {
+        let Some(row) = rows
+            .get(index)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let Some(membership_id) = row
+            .get_attribute("data-membership-id")
+            .and_then(|id| Uuid::parse_str(&id).ok())
+        else {
+            continue;
+        };
+        if membership_id == dragged_membership_id {
+            continue;
+        }
+        saw_other_row = true;
+        let rect = row.get_bounding_client_rect();
+        if y < rect.top() + rect.height() / 2.0 {
             return Some(DragHoverTarget::Reorder(membership_id));
         }
     }
-    None
+    saw_other_row.then_some(DragHoverTarget::End)
 }
 
 /// Reorders `rows` for live drag preview: pulls the dragged row (and, if it's a depth-0
@@ -910,10 +946,18 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     // Runs while an active drag's pointer sits near the top/bottom of the viewport, to
     // keep scrolling the page so the item can be dragged further than one screenful.
     let autoscroll_timer: Rc<RefCell<Option<Interval>>> = use_mut_ref(|| None);
-    let autoscroll_y: Rc<RefCell<f64>> = use_mut_ref(|| 0.0);
+    // Latest viewport position of the dragging pointer, so the auto-scroll tick can keep
+    // re-measuring the drop slot while the page moves under a held-still pointer.
+    let pointer_pos: Rc<RefCell<(f64, f64)>> = use_mut_ref(|| (0.0, 0.0));
     // Set right before a real (moved) drag ends, so the "click" event the browser still
     // fires right after pointerup doesn't also open/edit the row that was just dropped.
     let suppress_click: Rc<RefCell<bool>> = use_mut_ref(|| false);
+    // True for the whole of a press/drag gesture, so the effect further down can track it
+    // on the window. It can't be tracked on this row: previewing the drop moves the row
+    // within the list, and moving a node in the DOM both drops its pointer capture and
+    // takes it out from under the pointer, after which the gesture's own events go to
+    // whichever row is now there and this one never sees its pointerup.
+    let gesture_armed = use_state_eq(|| false);
 
     let item = &props.item;
     let membership = &props.membership;
@@ -976,12 +1020,18 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let on_pointer_down = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
+        let suppress_click = suppress_click.clone();
+        let gesture_armed = gesture_armed.clone();
         let on_drag_start = props.on_drag_start.clone();
         let membership_id = membership.id;
         Callback::from(move |e: PointerEvent| {
             if !interactive_drag || e.button() != 0 {
                 return;
             }
+            // A drag that ended over another row never gets a click of its own to spend
+            // the suppression on, so clear it here: whatever this new press turns into,
+            // it starts with a clean slate.
+            *suppress_click.borrow_mut() = false;
             let is_touch = e.pointer_type() == "touch" || e.pointer_type() == "pen";
             let pointer_id = e.pointer_id();
             let start_x = e.client_x() as f64;
@@ -994,7 +1044,9 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 is_touch,
                 active: false,
                 scrolling: false,
+                last_target: None,
             });
+            gesture_armed.set(true);
 
             if let Some(target) = e.target() {
                 if let Ok(el) = target.dyn_into::<web_sys::Element>() {
@@ -1024,13 +1076,36 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
+    let on_pointer_cancel = {
+        let tracker = tracker.clone();
+        let hold_timer = hold_timer.clone();
+        let autoscroll_timer = autoscroll_timer.clone();
+        let suppress_click = suppress_click.clone();
+        let gesture_armed = gesture_armed.clone();
+        let on_drag_hover = props.on_drag_hover.clone();
+        let on_drag_end = props.on_drag_end.clone();
+        Callback::from(move |_: PointerEvent| {
+            *hold_timer.borrow_mut() = None;
+            *autoscroll_timer.borrow_mut() = None;
+            gesture_armed.set(false);
+            let was_active = tracker.borrow().as_ref().is_some_and(|t| t.active);
+            *tracker.borrow_mut() = None;
+            if was_active {
+                *suppress_click.borrow_mut() = true;
+                on_drag_hover.emit(None);
+                on_drag_end.emit(());
+            }
+        })
+    };
+
     let on_pointer_move = {
         let tracker = tracker.clone();
         let hold_timer = hold_timer.clone();
         let autoscroll_timer = autoscroll_timer.clone();
-        let autoscroll_y = autoscroll_y.clone();
+        let pointer_pos = pointer_pos.clone();
         let on_drag_start = props.on_drag_start.clone();
         let on_drag_hover = props.on_drag_hover.clone();
+        let on_pointer_cancel = on_pointer_cancel.clone();
         let membership_id = membership.id;
         Callback::from(move |e: PointerEvent| {
             let Some(mut t) = tracker.borrow().clone() else {
@@ -1039,27 +1114,48 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             if t.pointer_id != e.pointer_id() {
                 return;
             }
+            // The button (or finger) came up somewhere we never saw the pointerup - off
+            // the window, say. End the gesture rather than let a later move resume it.
+            if (e.buttons() & 1) == 0 {
+                on_pointer_cancel.emit(e);
+                return;
+            }
             let x = e.client_x() as f64;
             let y = e.client_y() as f64;
 
             if t.active {
                 e.prevent_default();
-                on_drag_hover.emit(hover_target_at(x, y, membership_id));
-                *autoscroll_y.borrow_mut() = y;
-                if autoscroll_speed(y) != 0.0 {
-                    if autoscroll_timer.borrow().is_none() {
-                        let autoscroll_y = autoscroll_y.clone();
-                        *autoscroll_timer.borrow_mut() = Some(Interval::new(16, move || {
-                            let speed = autoscroll_speed(*autoscroll_y.borrow());
-                            if speed != 0.0 {
-                                if let Some(win) = web_sys::window() {
-                                    win.scroll_by_with_x_and_y(0.0, speed);
-                                }
-                            }
-                        }));
-                    }
-                } else {
+                let target = hover_target_at(x, y, membership_id);
+                t.last_target = target;
+                t.last_y = y;
+                *tracker.borrow_mut() = Some(t);
+                *pointer_pos.borrow_mut() = (x, y);
+                on_drag_hover.emit(target);
+
+                if autoscroll_speed(y) == 0.0 {
                     *autoscroll_timer.borrow_mut() = None;
+                } else if autoscroll_timer.borrow().is_none() {
+                    let pointer_pos = pointer_pos.clone();
+                    let tracker = tracker.clone();
+                    let on_drag_hover = on_drag_hover.clone();
+                    *autoscroll_timer.borrow_mut() =
+                        Some(Interval::new(AUTOSCROLL_TICK_MS, move || {
+                            let (x, y) = *pointer_pos.borrow();
+                            let speed = autoscroll_speed(y);
+                            if speed == 0.0 {
+                                return;
+                            }
+                            if let Some(win) = web_sys::window() {
+                                win.scroll_by_with_x_and_y(0.0, speed);
+                            }
+                            // The rows just slid under a pointer that hasn't moved, so
+                            // the slot has to be re-measured for the preview to follow.
+                            let target = hover_target_at(x, y, membership_id);
+                            if let Some(t) = tracker.borrow_mut().as_mut() {
+                                t.last_target = target;
+                            }
+                            on_drag_hover.emit(target);
+                        }));
                 }
                 return;
             }
@@ -1092,11 +1188,15 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             if dx.abs() <= MOUSE_DRAG_THRESHOLD && dy.abs() <= MOUSE_DRAG_THRESHOLD {
                 return;
             }
+            let target = hover_target_at(x, y, membership_id);
             t.active = true;
-            *tracker.borrow_mut() = Some(t.clone());
+            t.last_target = target;
+            t.last_y = y;
+            *tracker.borrow_mut() = Some(t);
+            *pointer_pos.borrow_mut() = (x, y);
             on_drag_start.emit(membership_id);
             e.prevent_default();
-            on_drag_hover.emit(hover_target_at(x, y, membership_id));
+            on_drag_hover.emit(target);
         })
     };
 
@@ -1105,6 +1205,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         let hold_timer = hold_timer.clone();
         let autoscroll_timer = autoscroll_timer.clone();
         let suppress_click = suppress_click.clone();
+        let gesture_armed = gesture_armed.clone();
         let state = state.clone();
         let on_drag_hover = props.on_drag_hover.clone();
         let on_drag_end = props.on_drag_end.clone();
@@ -1119,14 +1220,12 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             *hold_timer.borrow_mut() = None;
             *autoscroll_timer.borrow_mut() = None;
             *tracker.borrow_mut() = None;
+            gesture_armed.set(false);
             if t.active {
                 *suppress_click.borrow_mut() = true;
-                let target = hover_target_at(
-                    e.client_x() as f64,
-                    e.client_y() as f64,
-                    membership_id,
-                );
-                match target {
+                // Commit the slot the list has been previewing all along, rather than
+                // re-deriving one from the drop point.
+                match t.last_target {
                     Some(DragHoverTarget::Reorder(before_id)) => {
                         state.dispatch(Action::MoveBefore {
                             membership_id,
@@ -1150,25 +1249,43 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         })
     };
 
-    let on_pointer_cancel = {
-        let tracker = tracker.clone();
-        let hold_timer = hold_timer.clone();
-        let autoscroll_timer = autoscroll_timer.clone();
-        let suppress_click = suppress_click.clone();
-        let on_drag_hover = props.on_drag_hover.clone();
-        let on_drag_end = props.on_drag_end.clone();
-        Callback::from(move |_: PointerEvent| {
-            *hold_timer.borrow_mut() = None;
-            *autoscroll_timer.borrow_mut() = None;
-            let was_active = tracker.borrow().as_ref().map(|t| t.active).unwrap_or(false);
-            *tracker.borrow_mut() = None;
-            if was_active {
-                *suppress_click.borrow_mut() = true;
-                on_drag_hover.emit(None);
-                on_drag_end.emit(());
+    // The gesture is followed on the window, not on this row, for as long as it lasts -
+    // see `gesture_armed`. Registering from an effect (rather than from the pointerdown
+    // handler) means the listeners are torn down by Yew during a render, instead of a
+    // listener having to drop itself from inside its own callback.
+    {
+        let on_pointer_move = on_pointer_move.clone();
+        let on_pointer_up = on_pointer_up.clone();
+        let on_pointer_cancel = on_pointer_cancel.clone();
+        use_effect_with(*gesture_armed, move |armed| {
+            let mut listeners: Vec<EventListener> = Vec::new();
+            if *armed {
+                if let Some(window) = web_sys::window() {
+                    listeners.push(EventListener::new_with_options(
+                        &window,
+                        "pointermove",
+                        EventListenerOptions::enable_prevent_default(),
+                        move |e| {
+                            if let Some(e) = e.dyn_ref::<PointerEvent>() {
+                                on_pointer_move.emit(e.clone());
+                            }
+                        },
+                    ));
+                    listeners.push(EventListener::new(&window, "pointerup", move |e| {
+                        if let Some(e) = e.dyn_ref::<PointerEvent>() {
+                            on_pointer_up.emit(e.clone());
+                        }
+                    }));
+                    listeners.push(EventListener::new(&window, "pointercancel", move |e| {
+                        if let Some(e) = e.dyn_ref::<PointerEvent>() {
+                            on_pointer_cancel.emit(e.clone());
+                        }
+                    }));
+                }
             }
-        })
-    };
+            move || drop(listeners)
+        });
+    }
 
     let stop_pointer_down = Callback::from(|e: PointerEvent| e.stop_propagation());
 
@@ -1201,7 +1318,6 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 style={indent_style}
                 onclick={open_or_edit}
                 onpointerdown={on_pointer_down}
-                onpointermove={on_pointer_move}
                 onpointerup={on_pointer_up}
                 onpointercancel={on_pointer_cancel}
             >

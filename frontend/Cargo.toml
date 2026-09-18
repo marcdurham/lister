@@ -14,6 +14,7 @@ web-sys = { version = "0.3", features = [
     "HtmlSelectElement", "HtmlTextAreaElement", "Clipboard",
     "Blob", "BlobPropertyBag", "Url", "File", "FileList", "FileReader", "Event", "ProgressEvent",
     "DragEvent", "DataTransfer", "PopStateEvent", "PointerEvent", "Node", "EventTarget",
+    "NodeList", "DomRect",
 ] }
 gloo-storage = "0.3"
 gloo-net = "0.6"
