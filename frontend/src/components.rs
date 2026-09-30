@@ -2152,9 +2152,10 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
             .memberships
             .values()
             .filter(|m| m.item_id == item_id && m.deleted_at.is_none())
-            .filter_map(|m| m.parent_id)
-            .collect::<HashSet<Uuid>>()
+            .map(|m| m.parent_id)
+            .collect::<HashSet<Option<Uuid>>>()
     });
+    let in_orphans = use_state(|| false);
 
     // Never allow the item to become its own ancestor.
     let mut excluded = state.descendant_ids(item_id);
@@ -2170,7 +2171,11 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
 
     let on_navigate = {
         let path = path.clone();
-        Callback::from(move |new_path: Vec<Uuid>| path.set(new_path))
+        let in_orphans = in_orphans.clone();
+        Callback::from(move |new_path: Vec<Uuid>| {
+            in_orphans.set(false);
+            path.set(new_path);
+        })
     };
 
     let cancel = {
@@ -2183,17 +2188,17 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
         let pending = pending.clone();
         let on_close = props.on_close.clone();
         Callback::from(move |_: MouseEvent| {
-            let original: HashSet<Uuid> = state
+            let original: HashSet<Option<Uuid>> = state
                 .memberships
                 .values()
                 .filter(|m| m.item_id == item_id && m.deleted_at.is_none())
-                .filter_map(|m| m.parent_id)
+                .map(|m| m.parent_id)
                 .collect();
             for parent in pending.iter() {
                 if !original.contains(parent) {
                     state.dispatch(Action::AddToList {
                         item_id,
-                        parent: Some(*parent),
+                        parent: *parent,
                     });
                 }
             }
@@ -2201,7 +2206,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                 if !pending.contains(parent) {
                     let existing = state.memberships.values().find(|m| {
                         m.item_id == item_id
-                            && m.parent_id == Some(*parent)
+                            && m.parent_id == *parent
                             && m.deleted_at.is_none()
                     });
                     if let Some(m) = existing {
@@ -2216,7 +2221,13 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
     let query_lower = query.trim().to_lowercase();
     let current_parent = path.last().copied();
 
-    let rows: Vec<Item> = if query_lower.is_empty() {
+    let rows: Vec<Item> = if query_lower.is_empty() && *in_orphans {
+        state
+            .orphan_items()
+            .into_iter()
+            .filter(|i| !excluded.contains(&i.id))
+            .collect()
+    } else if query_lower.is_empty() {
         state
             .children(current_parent, true)
             .into_iter()
@@ -2259,12 +2270,47 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                 oninput={on_query_input}
             />
             if query_lower.is_empty() {
-                <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate} />
+                <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate.clone()} />
+                if *in_orphans {
+                    <nav class="breadcrumbs">
+                        <a onclick={{
+                            let on_navigate = on_navigate.clone();
+                            Callback::from(move |_: MouseEvent| on_navigate.emit(vec![]))
+                        }}>{ "Lists" }</a>
+                        <span class="sep">{ "›" }</span>
+                        <a>{ "Orphans" }</a>
+                    </nav>
+                }
+            }
+            if query_lower.is_empty() && current_parent.is_none() && !*in_orphans {
+                <ul class="items list-manager-list">
+                    <li class="item">
+                        <div class="item-main">
+                            <input
+                                type="checkbox"
+                                checked={pending.contains(&None)}
+                                onclick={{
+                                    let pending = pending.clone();
+                                    Callback::from(move |e: MouseEvent| {
+                                        e.stop_propagation();
+                                        let mut next = (*pending).clone();
+                                        if !next.remove(&None) {
+                                            next.insert(None);
+                                        }
+                                        pending.set(next);
+                                    })
+                                }}
+                            />
+                            { list_icon() }
+                            <span class="item-text">{ "Top level (root list)" }</span>
+                        </div>
+                    </li>
+                </ul>
             }
             <ul class="items list-manager-list">
                 { for rows.iter().map(|row_item| {
                     let row_id = row_item.id;
-                    let checked = pending.contains(&row_id);
+                    let checked = pending.contains(&Some(row_id));
                     let child_count = state.direct_child_count(row_id);
                     let has_children = child_count > 0;
 
@@ -2273,10 +2319,8 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                         Callback::from(move |e: MouseEvent| {
                             e.stop_propagation();
                             let mut next = (*pending).clone();
-                            if next.contains(&row_id) {
-                                next.remove(&row_id);
-                            } else {
-                                next.insert(row_id);
+                            if !next.remove(&Some(row_id)) {
+                                next.insert(Some(row_id));
                             }
                             pending.set(next);
                         })
@@ -2285,6 +2329,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                     let open = {
                         let path = path.clone();
                         let query = query.clone();
+                        let in_orphans = in_orphans.clone();
                         Callback::from(move |_: MouseEvent| {
                             if !has_children {
                                 return;
@@ -2292,6 +2337,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                             let mut next = (*path).clone();
                             next.push(row_id);
                             path.set(next);
+                            in_orphans.set(false);
                             query.set(String::new());
                         })
                     };
@@ -2314,7 +2360,21 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                     }
                 }) }
             </ul>
-            if rows.is_empty() {
+            if query_lower.is_empty() && current_parent.is_none() && !*in_orphans {
+                <ul class="items list-manager-list">
+                    <li class="item">
+                        <div class="item-main" onclick={{
+                            let in_orphans = in_orphans.clone();
+                            Callback::from(move |_: MouseEvent| in_orphans.set(true))
+                        }}>
+                            { list_icon() }
+                            <span class="item-text">{ "Orphans" }</span>
+                            <span class="child-count">{ state.orphan_items().len() }</span>
+                        </div>
+                    </li>
+                </ul>
+            }
+            if rows.is_empty() && (!query_lower.is_empty() || current_parent.is_some() || *in_orphans) {
                 <p class="empty">
                     { if query_lower.is_empty() { "Nothing here." } else { "No matches." } }
                 </p>

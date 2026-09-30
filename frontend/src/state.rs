@@ -125,6 +125,19 @@ impl AppState {
             .map(|m| m.id)
     }
 
+    /// Live items that belong to no list at all (not even the top level), sorted by text.
+    pub fn orphan_items(&self) -> Vec<Item> {
+        let mut rows: Vec<Item> = self
+            .items
+            .values()
+            .filter(|i| i.deleted_at.is_none())
+            .filter(|i| self.active_membership_count(i.id) == 0)
+            .cloned()
+            .collect();
+        rows.sort_by(|a, b| a.text.to_lowercase().cmp(&b.text.to_lowercase()));
+        rows
+    }
+
     /// Count of live (non-deleted) direct children, regardless of visibility.
     pub fn direct_child_count(&self, item_id: Uuid) -> usize {
         self.memberships

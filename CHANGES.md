@@ -196,3 +196,9 @@
   non-deleted item under the current list at every nesting depth (an item that sits in
   several lists counts once); at the top level it counts everything across all lists.
   Uses the new `AppState::live_descendant_count`, with a unit test.
+
+## 2026-09-30
+- List manager: added a "Top level (root list)" checkbox so an item can be added to the
+  root list, and a virtual "Orphans" list at the end of the root list that holds every live
+  item belonging to no list (browsable, and checkable as a target). Search in the manager
+  already covers all items, orphans included. Added `AppState::orphan_items`.
