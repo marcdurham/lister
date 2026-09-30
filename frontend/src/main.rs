@@ -81,6 +81,7 @@ fn app() -> Html {
     let remote_mode = use_state(store::load_remote_mode);
     // Bumped when a per-item sync replaces the item being edited, to rebuild the editor.
     let editor_generation = use_state(|| 0u32);
+    let pull_message = use_state(|| None::<String>);
 
     // Resolve the current session once on mount.
     {
@@ -338,7 +339,9 @@ fn app() -> Html {
     let on_edit = {
         let path = path.clone();
         let editing = editing.clone();
+        let pull_message = pull_message.clone();
         Callback::from(move |ids: (Uuid, Uuid)| {
+            pull_message.set(None);
             let route = Route {
                 path: (*path).clone(),
                 editing: Some(ids),
@@ -405,7 +408,11 @@ fn app() -> Html {
     };
     let on_pulled = {
         let editor_generation = editor_generation.clone();
-        Callback::from(move |_: ()| editor_generation.set(*editor_generation + 1))
+        let pull_message = pull_message.clone();
+        Callback::from(move |message: String| {
+            pull_message.set(Some(message));
+            editor_generation.set(*editor_generation + 1);
+        })
     };
 
     let trash_count = state.trashed_items().len();
@@ -592,6 +599,7 @@ fn app() -> Html {
                     key={*editor_generation}
                     remote_mode={*remote_mode}
                     on_pulled={on_pulled}
+                    initial_message={(*pull_message).clone()}
                     state={state.clone()}
                     item_id={item_id}
                     membership_id={membership_id}

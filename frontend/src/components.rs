@@ -1502,7 +1502,11 @@ pub struct ItemEditorProps {
     /// Fired after a sync replaced this item with the server's newer copy, so the editor
     /// can be rebuilt from it instead of showing the stale text.
     #[prop_or_default]
-    pub on_pulled: Callback<()>,
+    pub on_pulled: Callback<String>,
+    /// Message to show on first render - set after a pull, since the editor is rebuilt
+    /// and would otherwise lose the message that explains why its contents changed.
+    #[prop_or_default]
+    pub initial_message: Option<String>,
 }
 
 #[function_component(ItemEditor)]
@@ -1692,7 +1696,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
 
     let remote_open = use_state(|| false);
     let remote_busy = use_state(|| false);
-    let remote_message = use_state(|| None::<(bool, String)>);
+    let remote_message = use_state(|| props.initial_message.clone().map(|m| (true, m)));
     let remote_ref = use_node_ref();
     use_click_outside(remote_ref.clone(), remote_open.clone());
 
@@ -1735,10 +1739,10 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 };
                 state.dispatch(Action::Reload);
                 remote_busy.set(false);
-                remote_message.set(Some(message));
                 if pulled {
-                    on_pulled.emit(());
+                    on_pulled.emit(message.1.clone());
                 }
+                remote_message.set(Some(message));
             });
         })
     };

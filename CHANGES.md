@@ -171,3 +171,8 @@
     if it's newer).
 - Local storage now records when each item was last pushed/pulled (`ItemRecord::pushed_at`);
   `AppState` carries per-item sync status; `sync::sync_item` does the per-item push/sync.
+
+## 2026-09-30 (later)
+- After "Sync with server" pulls a newer copy into the item editor, the editor is rebuilt
+  from it; the "server had a newer version" message now carries over to the rebuilt editor
+  instead of disappearing (`ItemEditor::initial_message`, cleared when another item is opened).
