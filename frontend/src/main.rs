@@ -11,7 +11,7 @@ mod sync;
 
 use components::{
     AdminPage, AuthScreen, Breadcrumbs, Composer, DragHoverTarget, GoogleImportDialog, ItemEditor,
-    ItemRow, ListHeader, ListManager, SessionButton, SettingsMenu, TrashView,
+    ItemRow, ListHeader, ListManager, RemoteBar, SessionButton, SettingsMenu, TrashView,
 };
 use gloo_events::EventListener;
 use gloo_timers::future::TimeoutFuture;
@@ -78,6 +78,9 @@ fn app() -> Html {
     let hover_end = use_state(|| false);
     let hover_root = use_state(|| false);
     let search = use_state(|| None::<String>);
+    let remote_mode = use_state(store::load_remote_mode);
+    // Bumped when a per-item sync replaces the item being edited, to rebuild the editor.
+    let editor_generation = use_state(|| 0u32);
 
     // Resolve the current session once on mount.
     {
@@ -393,6 +396,18 @@ fn app() -> Html {
         Callback::from(move |_: ()| google_import.set(None))
     };
 
+    let toggle_remote = {
+        let remote_mode = remote_mode.clone();
+        Callback::from(move |_: ()| {
+            store::save_remote_mode(!*remote_mode);
+            remote_mode.set(!*remote_mode);
+        })
+    };
+    let on_pulled = {
+        let editor_generation = editor_generation.clone();
+        Callback::from(move |_: ()| editor_generation.set(*editor_generation + 1))
+    };
+
     let trash_count = state.trashed_items().len();
     let unsynced_count = if state.online { 0 } else { store::unsynced_count() };
 
@@ -477,6 +492,7 @@ fn app() -> Html {
                 on_drag_hover={on_drag_hover.clone()}
                 on_drag_end={on_drag_end.clone()}
                 depth={*depth}
+                remote_mode={*remote_mode}
             />
         });
     }
@@ -505,6 +521,8 @@ fn app() -> Html {
                         is_logged_in={user.is_some()}
                         current_parent={current_parent}
                         on_open_admin={open_admin}
+                        remote_mode={*remote_mode}
+                        on_toggle_remote={toggle_remote}
                     />
                     <SessionButton
                         user={user.clone()}
@@ -515,6 +533,9 @@ fn app() -> Html {
                     />
                 </div>
             </header>
+            if *remote_mode {
+                <RemoteBar state={state.clone()} logged_in={user.is_some()} />
+            }
             if let Some(lists) = (*google_import).clone() {
                 <GoogleImportDialog state={state.clone()} lists={lists} on_close={close_google_import} />
             }
@@ -568,6 +589,9 @@ fn app() -> Html {
             }
             if let Some((item_id, membership_id)) = *editing {
                 <ItemEditor
+                    key={*editor_generation}
+                    remote_mode={*remote_mode}
+                    on_pulled={on_pulled}
                     state={state.clone()}
                     item_id={item_id}
                     membership_id={membership_id}

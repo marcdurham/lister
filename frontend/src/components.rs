@@ -5,7 +5,8 @@ use crate::google::{self, ImportedTaskList};
 use crate::markdown;
 use crate::model::{Item, Membership};
 use crate::state::{Action, AppState};
-use crate::store::{self, ThemeMode};
+use crate::store::{self, ItemSync, SyncStatus, ThemeMode};
+use crate::sync::{self, ItemSyncOutcome};
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_timers::callback::{Interval, Timeout};
 use std::cell::RefCell;
@@ -164,6 +165,69 @@ fn copy_icon() -> Html {
 
 fn format_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.format("%Y-%m-%d %H:%M").to_string()
+}
+
+/// Remote-mode marker: a disk for an item that exists only in this browser, a cloud with
+/// a check for one that's identical on the server, and a cloud with an up arrow for one
+/// that's on the server but has local changes still to upload.
+fn sync_icon(status: SyncStatus) -> Html {
+    const CLOUD: &str = "M4.5 12.5h7a2.7 2.7 0 0 0 .4-5.4A3.6 3.6 0 0 0 5 6.2a3.2 3.2 0 0 0-.5 6.3z";
+    match status {
+        SyncStatus::LocalOnly => html! {
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path
+                    d="M2.5 2h9l2 2v9a0.5 0.5 0 0 1-0.5 0.5h-10.5a0.5 0.5 0 0 1-0.5-0.5v-10.5a0.5 0.5 0 0 1 0.5-0.5z"
+                    fill="none" stroke="currentColor" stroke-width="1.2"
+                />
+                <rect x="4" y="8.3" width="8" height="5.2" fill="currentColor"/>
+            </svg>
+        },
+        SyncStatus::Synced => html! {
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d={CLOUD} fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                <polyline points="6.3,9.6 7.7,11 10.2,8.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        },
+        SyncStatus::LocalChanges => html! {
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d={CLOUD} fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                <line x1="8.2" y1="12" x2="8.2" y2="8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                <polyline points="6.4,9.4 8.2,7.6 10,9.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        },
+    }
+}
+
+fn sync_status_class(status: SyncStatus) -> &'static str {
+    match status {
+        SyncStatus::LocalOnly => "sync-local",
+        SyncStatus::LocalChanges => "sync-pending",
+        SyncStatus::Synced => "sync-synced",
+    }
+}
+
+fn sync_status_label(status: SyncStatus) -> &'static str {
+    match status {
+        SyncStatus::LocalOnly => "Local only (in this browser, not uploaded)",
+        SyncStatus::LocalChanges => "On the server, with local changes not yet uploaded",
+        SyncStatus::Synced => "On the server and in this browser",
+    }
+}
+
+/// The remote-mode marker shown on an item row.
+fn sync_marker(info: Option<&ItemSync>) -> Html {
+    let Some(info) = info else {
+        return html! {};
+    };
+    let status = info.status();
+    html! {
+        <span
+            class={classes!("sync-icon", sync_status_class(status))}
+            title={sync_status_label(status)}
+        >
+            { sync_icon(status) }
+        </span>
+    }
 }
 
 /// A `font-size` declaration for the item editor's page title, scaled down for longer
@@ -974,6 +1038,9 @@ pub struct ItemRowProps {
     /// aren't drag sources or drop targets.
     #[prop_or(0)]
     pub depth: usize,
+    /// Show the local/remote/both marker on the row.
+    #[prop_or_default]
+    pub remote_mode: bool,
 }
 
 #[function_component(ItemRow)]
@@ -1395,6 +1462,9 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                         { calendar_icon() }
                     </span>
                 }
+                if props.remote_mode {
+                    { sync_marker(state.sync_info.get(&item.id)) }
+                }
                 <button
                     class={classes!("edit-btn", shows_nest_target.then_some("drag-placeholder"))}
                     onclick={edit}
@@ -1426,6 +1496,13 @@ pub struct ItemEditorProps {
     pub membership_id: Uuid,
     pub on_close: Callback<()>,
     pub on_manage_lists: Callback<Uuid>,
+    /// Show the item's server status and the "Remote" menu.
+    #[prop_or_default]
+    pub remote_mode: bool,
+    /// Fired after a sync replaced this item with the server's newer copy, so the editor
+    /// can be rebuilt from it instead of showing the stale text.
+    #[prop_or_default]
+    pub on_pulled: Callback<()>,
 }
 
 #[function_component(ItemEditor)]
@@ -1612,6 +1689,66 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
             })
         })
     };
+
+    let remote_open = use_state(|| false);
+    let remote_busy = use_state(|| false);
+    let remote_message = use_state(|| None::<(bool, String)>);
+    let remote_ref = use_node_ref();
+    use_click_outside(remote_ref.clone(), remote_open.clone());
+
+    let remote_action = |pull: bool| {
+        let remote_open = remote_open.clone();
+        let remote_busy = remote_busy.clone();
+        let remote_message = remote_message.clone();
+        let state = state.clone();
+        let on_pulled = props.on_pulled.clone();
+        let id = item.id;
+        Callback::from(move |_: MouseEvent| {
+            remote_open.set(false);
+            if *remote_busy {
+                return;
+            }
+            remote_busy.set(true);
+            remote_message.set(None);
+            let remote_busy = remote_busy.clone();
+            let remote_message = remote_message.clone();
+            let state = state.clone();
+            let on_pulled = on_pulled.clone();
+            spawn_local(async move {
+                let result = sync::sync_item(id, pull).await;
+                let pulled = result == Ok(ItemSyncOutcome::Pulled);
+                let message = match result {
+                    Ok(ItemSyncOutcome::Uploaded) => (true, "Uploaded to the server.".to_string()),
+                    Ok(ItemSyncOutcome::AlreadyInSync) => {
+                        (true, "Already in sync with the server.".to_string())
+                    }
+                    Ok(ItemSyncOutcome::Pulled) => (
+                        true,
+                        "The server had a newer version; it replaced this one.".to_string(),
+                    ),
+                    Ok(ItemSyncOutcome::ServerNewer) => (
+                        false,
+                        "The server has a newer version, so nothing was uploaded. Use \u{201c}Sync with server\u{201d} to pull it."
+                            .to_string(),
+                    ),
+                    Err(msg) => (false, msg),
+                };
+                state.dispatch(Action::Reload);
+                remote_busy.set(false);
+                remote_message.set(Some(message));
+                if pulled {
+                    on_pulled.emit(());
+                }
+            });
+        })
+    };
+    let push_to_server = remote_action(false);
+    let sync_with_server = remote_action(true);
+    let toggle_remote_menu = {
+        let remote_open = remote_open.clone();
+        Callback::from(move |_: MouseEvent| remote_open.set(!*remote_open))
+    };
+    let item_sync = state.sync_info.get(&item.id).copied();
 
     let close = {
         let on_close = props.on_close.clone();
@@ -1907,6 +2044,23 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                         </button>
                     }
                     <button onclick={manage_lists}>{ "Lists" }</button>
+                    if props.remote_mode {
+                        <div class="remote-menu" ref={remote_ref}>
+                            <button type="button" onclick={toggle_remote_menu} disabled={*remote_busy}>
+                                { if *remote_busy { "Working..." } else { "Remote" } }
+                            </button>
+                            if *remote_open {
+                                <div class="settings-dropdown remote-dropdown">
+                                    <button class="settings-item" onclick={push_to_server}>
+                                        { "Push to server" }
+                                    </button>
+                                    <button class="settings-item" onclick={sync_with_server}>
+                                        { "Sync with server" }
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    }
                     <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
                 </div>
                 if *confirm_remove {
@@ -1932,6 +2086,30 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 <div class="editor-meta">
                     <div>{ "Created: " }{ format_ts(&item.created_at) }</div>
                     <div>{ "Updated: " }{ format_ts(&item.updated_at) }</div>
+                    if props.remote_mode {
+                        <div class="remote-status">
+                            { "Uploaded: " }
+                            { match item_sync {
+                                None => "Not uploaded".to_string(),
+                                Some(info) => match (info.status(), info.pushed_at) {
+                                    (SyncStatus::LocalOnly, _) => "Not uploaded".to_string(),
+                                    (_, Some(at)) => format_ts(&at),
+                                    (_, None) => "Yes (time not recorded)".to_string(),
+                                },
+                            } }
+                        </div>
+                        if let Some(info) = item_sync {
+                            <div class={classes!("remote-status", sync_status_class(info.status()))}>
+                                <span class="sync-icon">{ sync_icon(info.status()) }</span>
+                                { " " }{ sync_status_label(info.status()) }
+                            </div>
+                        }
+                        if let Some((ok, msg)) = &*remote_message {
+                            <div class={classes!("remote-message", (!*ok).then_some("remote-error"))}>
+                                { msg }
+                            </div>
+                        }
+                    }
                 </div>
                 <div class="editor-actions">
                     <button onclick={save}>{ "Save" }</button>
@@ -2435,6 +2613,8 @@ pub struct SettingsMenuProps {
     /// as a top-level list when this is `None`.
     pub current_parent: Option<Uuid>,
     pub on_open_admin: Callback<()>,
+    pub remote_mode: bool,
+    pub on_toggle_remote: Callback<()>,
 }
 
 #[function_component(SettingsMenu)]
@@ -2481,6 +2661,15 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
         Callback::from(move |_: MouseEvent| {
             open.set(false);
             on_open_admin.emit(());
+        })
+    };
+
+    let toggle_remote = {
+        let open = open.clone();
+        let on_toggle_remote = props.on_toggle_remote.clone();
+        Callback::from(move |_: MouseEvent| {
+            open.set(false);
+            on_toggle_remote.emit(());
         })
     };
 
@@ -2651,6 +2840,14 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
             </button>
             if *open {
                 <div class="settings-dropdown">
+                    <button
+                        class="settings-item theme-option"
+                        onclick={toggle_remote}
+                        aria-pressed={props.remote_mode.to_string()}
+                    >
+                        <span class="theme-check" aria-hidden="true">{ if props.remote_mode { "✓" } else { "" } }</span>
+                        { "Remote mode" }
+                    </button>
                     if props.is_logged_in {
                         <button class="settings-item" onclick={import_google}>
                             { "Import from Google Tasks" }
@@ -2690,6 +2887,95 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                 onchange={on_markdown_file_change}
                 style="display: none;"
             />
+        </div>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct RemoteBarProps {
+    pub state: UseReducerHandle<AppState>,
+    pub logged_in: bool,
+}
+
+/// Shown under the header in remote mode: how many items exist only in this browser or
+/// have local changes, when the last full sync finished, and a button to run one now.
+#[function_component(RemoteBar)]
+pub fn remote_bar(props: &RemoteBarProps) -> Html {
+    let busy = use_state(|| false);
+    let error = use_state(|| None::<String>);
+
+    let live = |i: &&Uuid| props.state.items.get(*i).is_some_and(|it| it.deleted_at.is_none());
+    let count = |wanted: SyncStatus| {
+        props
+            .state
+            .sync_info
+            .iter()
+            .filter(|(id, _)| live(id))
+            .filter(|(_, info)| info.status() == wanted)
+            .count()
+    };
+    let local_only = count(SyncStatus::LocalOnly);
+    let changed = count(SyncStatus::LocalChanges);
+
+    let can_sync = props.logged_in && props.state.online && !*busy;
+    let on_sync = {
+        let busy = busy.clone();
+        let error = error.clone();
+        let state = props.state.clone();
+        Callback::from(move |_: MouseEvent| {
+            if *busy {
+                return;
+            }
+            busy.set(true);
+            error.set(None);
+            let busy = busy.clone();
+            let error = error.clone();
+            let state = state.clone();
+            spawn_local(async move {
+                if !sync::sync_once().await {
+                    error.set(Some("Sync failed - the server couldn't be reached.".to_string()));
+                }
+                state.dispatch(Action::Reload);
+                busy.set(false);
+            });
+        })
+    };
+
+    let hint = if !props.logged_in {
+        Some("Sign in to sync with the server.")
+    } else if !props.state.online {
+        Some("Offline.")
+    } else {
+        None
+    };
+
+    html! {
+        <div class="remote-bar">
+            <div class="remote-bar-summary">
+                <span class="remote-bar-title">{ "Remote mode" }</span>
+                <span>
+                    { if local_only == 0 && changed == 0 {
+                        "Everything is on the server.".to_string()
+                    } else {
+                        format!("{local_only} local only, {changed} with local changes.")
+                    } }
+                </span>
+                <span class="remote-bar-last">
+                    { match store::last_sync() {
+                        Some(at) => format!("Last sync: {}", format_ts(&at)),
+                        None => "Not synced yet.".to_string(),
+                    } }
+                </span>
+                if let Some(hint) = hint {
+                    <span class="remote-bar-last">{ hint }</span>
+                }
+                if let Some(msg) = &*error {
+                    <span class="remote-error">{ msg }</span>
+                }
+            </div>
+            <button class="remote-sync-btn" onclick={on_sync} disabled={!can_sync}>
+                { if *busy { "Syncing..." } else { "Sync" } }
+            </button>
         </div>
     }
 }

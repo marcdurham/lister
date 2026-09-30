@@ -12,6 +12,9 @@ pub struct AppState {
     pub memberships: HashMap<Uuid, Membership>,
     pub online: bool,
     pub syncing: bool,
+    /// Per-item server sync status (see `store::ItemSync`), refreshed after every action
+    /// that can touch local storage.
+    pub sync_info: HashMap<Uuid, store::ItemSync>,
 }
 
 impl AppState {
@@ -29,6 +32,7 @@ impl AppState {
             memberships,
             online: crate::sync::is_online(),
             syncing: false,
+            sync_info: store::load_item_sync(),
         }
     }
 
@@ -325,6 +329,22 @@ impl Reducible for AppState {
     type Action = Action;
 
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
+        let touches_storage = !matches!(
+            action,
+            Action::Reload | Action::Tick | Action::SetOnline(_) | Action::SetSyncing(_)
+        );
+        let next = self.reduce_action(action);
+        if !touches_storage {
+            return next;
+        }
+        let mut next = next;
+        Rc::make_mut(&mut next).sync_info = store::load_item_sync();
+        next
+    }
+}
+
+impl AppState {
+    fn reduce_action(self: Rc<Self>, action: Action) -> Rc<Self> {
         match action {
             Action::Reload => Rc::new(AppState::load()),
             Action::Tick => Rc::new((*self).clone()),
@@ -722,6 +742,7 @@ impl Reducible for AppState {
                     memberships: memberships.into_iter().map(|m| (m.id, m)).collect(),
                     online: self.online,
                     syncing: self.syncing,
+                    sync_info: HashMap::new(),
                 })
             }
         }
@@ -752,6 +773,7 @@ mod tests {
             memberships,
             online: true,
             syncing: false,
+            sync_info: HashMap::new(),
         }
     }
 
@@ -794,6 +816,7 @@ mod tests {
             memberships,
             online: true,
             syncing: false,
+            sync_info: HashMap::new(),
         };
         assert_eq!(
             state.copy_as_markdown(None),
@@ -827,6 +850,7 @@ mod tests {
             memberships,
             online: true,
             syncing: false,
+            sync_info: HashMap::new(),
         };
 
         let markdown = state.copy_as_markdown(None);

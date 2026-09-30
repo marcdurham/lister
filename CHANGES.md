@@ -156,3 +156,18 @@
   white (an inset outline, so the row's size doesn't change) and swaps the row's
   left-hand icon for a right-pointing chevron. The edit button stays in the row
   (invisible) during a drag so row heights don't shift when a drag starts.
+
+## 2026-09-30
+- Added a "Remote mode" toggle to the settings menu (remembered in the browser). While it's
+  on:
+  - every item row shows an icon for where it lives: a disk (local only - never uploaded),
+    a cloud with a check (on the server and identical), or a cloud with an up arrow (on the
+    server, but with local changes not yet uploaded);
+  - a bar under the header summarizes how many items are local-only / changed, shows when
+    the last full sync finished, and has a "Sync" button that pushes and pulls everything;
+  - the item editor shows an "Uploaded:" timestamp ("Not uploaded" for a local-only item),
+    the item's status, and a "Remote" menu with "Push to server" (upload; leaves a newer
+    server copy alone and says so) and "Sync with server" (upload, or pull the server's copy
+    if it's newer).
+- Local storage now records when each item was last pushed/pulled (`ItemRecord::pushed_at`);
+  `AppState` carries per-item sync status; `sync::sync_item` does the per-item push/sync.
