@@ -176,3 +176,17 @@
 - After "Sync with server" pulls a newer copy into the item editor, the editor is rebuilt
   from it; the "server had a newer version" message now carries over to the rebuilt editor
   instead of disappearing (`ItemEditor::initial_message`, cleared when another item is opened).
+
+## 2026-09-30 13:26 PDT
+- Fixed devices silently missing each other's lists even though both said "Synced". Pulls
+  used the client-stamped `updated_at` against a server-time cursor, so an item edited on
+  one device (offline, or with a slow clock) and pushed after another device had synced had
+  an `updated_at` older than that device's cursor and was never pulled. Migration 0006 adds
+  a server-stamped `server_updated_at` to `items` and `memberships` (set on every accepted
+  write); `/api/sync` now pulls rows whose `server_updated_at` (or `updated_at`, which keeps
+  the per-item sync check working) is past the cursor. The returned cursor is now the
+  database clock minus a 5s overlap so concurrent commits can't slip past it. Existing rows
+  are stamped at migration time, so every client re-pulls everything once after deploy,
+  which also recovers the currently missing lists. Conflict resolution is unchanged
+  (still last-write-wins on `updated_at`). Added a regression test; it wasn't run here
+  because the test database needs credentials this session doesn't have.

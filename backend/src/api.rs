@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::auth;
 
+const CURSOR_OVERLAP_SECS: i64 = 5;
+
 fn epoch() -> DateTime<Utc> {
     DateTime::<Utc>::from_timestamp(0, 0).expect("valid epoch timestamp")
 }
@@ -38,7 +40,8 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
             hide_after_created_unit = EXCLUDED.hide_after_created_unit,
             recur_amount = EXCLUDED.recur_amount,
             recur_unit = EXCLUDED.recur_unit,
-            show_nested_children = EXCLUDED.show_nested_children
+            show_nested_children = EXCLUDED.show_nested_children,
+            server_updated_at = clock_timestamp()
         WHERE items.updated_at < EXCLUDED.updated_at AND items.owner_id = EXCLUDED.owner_id
         "#,
         item.id,
@@ -92,7 +95,8 @@ async fn upsert_membership(pool: &PgPool, membership: &Membership, owner_id: Uui
             position = EXCLUDED.position,
             visible = EXCLUDED.visible,
             updated_at = EXCLUDED.updated_at,
-            deleted_at = EXCLUDED.deleted_at
+            deleted_at = EXCLUDED.deleted_at,
+            server_updated_at = clock_timestamp()
         WHERE memberships.updated_at < EXCLUDED.updated_at
         "#,
         membership.id,
@@ -118,6 +122,16 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
     let body = body.into_inner();
     let since = body.since.unwrap_or_else(epoch);
 
+    // Taken before the upserts and pulls, and backed off a little, so a write that commits
+    // concurrently with this request is still newer than the cursor we hand back.
+    let cursor = match sqlx::query_scalar::<_, DateTime<Utc>>("SELECT clock_timestamp()")
+        .fetch_one(pool.get_ref())
+        .await
+    {
+        Ok(now) => now - chrono::Duration::seconds(CURSOR_OVERLAP_SECS),
+        Err(err) => return HttpResponse::InternalServerError().body(format!("cursor failed: {err}")),
+    };
+
     for item in &body.items {
         if let Err(err) = upsert_item(&pool, item, owner_id).await {
             return HttpResponse::InternalServerError().body(format!("sync item failed: {err}"));
@@ -139,7 +153,7 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
                   due_at, show_after, show_before_due_amount, show_before_due_unit,
                   hide_after, hide_after_created_amount, hide_after_created_unit,
                   recur_amount, recur_unit, show_nested_children
-           FROM items WHERE updated_at > $1 AND owner_id = $2"#,
+           FROM items WHERE (server_updated_at > $1 OR updated_at > $1) AND owner_id = $2"#,
         since,
         owner_id,
     )
@@ -155,7 +169,7 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
         r#"SELECT m.id, m.item_id, m.parent_id, m.position, m.visible, m.created_at, m.updated_at, m.deleted_at
            FROM memberships m
            JOIN items i ON i.id = m.item_id
-           WHERE m.updated_at > $1 AND i.owner_id = $2"#,
+           WHERE (m.server_updated_at > $1 OR m.updated_at > $1) AND i.owner_id = $2"#,
         since,
         owner_id,
     )
@@ -173,7 +187,7 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
     HttpResponse::Ok().json(SyncResponse {
         items,
         memberships,
-        cursor: Utc::now(),
+        cursor,
     })
 }
 
@@ -261,6 +275,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row.as_deref(), Some("fresh"));
+    }
+
+    #[tokio::test]
+    async fn late_pushed_item_with_old_updated_at_is_pulled_by_cursor() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+
+        // A device edited this an hour ago but only pushes it now, after another device
+        // already synced and holds a cursor from a moment ago.
+        let cursor: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut item = Item::new("late".into(), true);
+        item.updated_at = cursor - chrono::Duration::hours(1);
+        upsert_item(&pool, &item, owner).await.unwrap();
+
+        let pulled: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM items WHERE (server_updated_at > $1 OR updated_at > $1) AND owner_id = $2",
+        )
+        .bind(cursor)
+        .bind(owner)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pulled, vec![item.id]);
     }
 
     #[tokio::test]

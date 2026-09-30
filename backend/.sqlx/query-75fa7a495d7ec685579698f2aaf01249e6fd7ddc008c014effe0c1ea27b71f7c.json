@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at,\n                  due_at, show_after, show_before_due_amount, show_before_due_unit,\n                  hide_after, hide_after_created_amount, hide_after_created_unit,\n                  recur_amount, recur_unit, show_nested_children\n           FROM items WHERE updated_at > $1 AND owner_id = $2",
+  "query": "SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at,\n                  due_at, show_after, show_before_due_amount, show_before_due_unit,\n                  hide_after, hide_after_created_amount, hide_after_created_unit,\n                  recur_amount, recur_unit, show_nested_children\n           FROM items WHERE (server_updated_at > $1 OR updated_at > $1) AND owner_id = $2",
   "describe": {
     "columns": [
       {
@@ -127,5 +127,5 @@
       false
     ]
   },
-  "hash": "92c54b02c65a283b96828afa5f4e82dd83a22c4cd6c85d9affe6ae65f208a3e9"
+  "hash": "75fa7a495d7ec685579698f2aaf01249e6fd7ddc008c014effe0c1ea27b71f7c"
 }

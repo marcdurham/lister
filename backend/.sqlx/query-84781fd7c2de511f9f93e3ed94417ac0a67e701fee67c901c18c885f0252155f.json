@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT m.id, m.item_id, m.parent_id, m.position, m.visible, m.created_at, m.updated_at, m.deleted_at\n           FROM memberships m\n           JOIN items i ON i.id = m.item_id\n           WHERE m.updated_at > $1 AND i.owner_id = $2",
+  "query": "SELECT m.id, m.item_id, m.parent_id, m.position, m.visible, m.created_at, m.updated_at, m.deleted_at\n           FROM memberships m\n           JOIN items i ON i.id = m.item_id\n           WHERE (m.server_updated_at > $1 OR m.updated_at > $1) AND i.owner_id = $2",
   "describe": {
     "columns": [
       {
@@ -61,5 +61,5 @@
       true
     ]
   },
-  "hash": "4990217c3cf156750a156ace7c2079e6d9ee3b11f56ee8395ee709646ec1e6de"
+  "hash": "84781fd7c2de511f9f93e3ed94417ac0a67e701fee67c901c18c885f0252155f"
 }
