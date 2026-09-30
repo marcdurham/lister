@@ -17,6 +17,9 @@ pub struct AppState {
     pub sync_info: HashMap<Uuid, store::ItemSync>,
 }
 
+/// Sentinel list id in a view path standing for the virtual "Orphans" list.
+pub const ORPHANS_ID: Uuid = Uuid::nil();
+
 impl AppState {
     pub fn load() -> Self {
         let items = store::load_items()
@@ -131,6 +134,18 @@ impl AppState {
             .values()
             .find(|m| m.item_id == item_id && m.deleted_at.is_none())
             .map(|m| m.id)
+    }
+
+    /// Orphans as display rows, each paired with a placeholder membership (see `search_all`).
+    pub fn orphan_rows(&self) -> Vec<(Item, Membership, usize)> {
+        self.orphan_items()
+            .into_iter()
+            .map(|item| {
+                let mut placeholder = Membership::new(item.id, None, 0.0);
+                placeholder.id = item.id;
+                (item, placeholder, 1)
+            })
+            .collect()
     }
 
     /// Live items that belong to no list at all (not even the top level), sorted by text.

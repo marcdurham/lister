@@ -207,3 +207,8 @@
 - Main view search from the root list now also finds orphan items (items in no list).
   They appear as non-draggable rows using a placeholder membership, and open in the
   item editor like any other result.
+
+## 2026-09-30 (3)
+- Main view: the root list now ends with a virtual "Orphans" row (with a count) that opens
+  a list of all items belonging to no list. It has its own breadcrumb and count, hides the
+  add-item composer, and its rows are non-draggable (placeholder memberships).

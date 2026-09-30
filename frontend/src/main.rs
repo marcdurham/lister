@@ -430,7 +430,10 @@ fn app() -> Html {
     // Searching from the root list has nothing meaningful to scope to, so it searches
     // every list instead of just the top-level ones.
     let searching_globally = current_parent.is_none() && query_lower.is_some();
-    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if searching_globally {
+    let in_orphans = current_parent == Some(state::ORPHANS_ID);
+    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if in_orphans {
+        state.orphan_rows()
+    } else if searching_globally {
         state.search_all(query_lower.as_deref().unwrap(), *show_hidden)
     } else if nested_mode {
         state.children_recursive(current_parent, *show_hidden)
@@ -503,6 +506,21 @@ fn app() -> Html {
             />
         });
     }
+    if current_parent.is_none() && query_lower.is_none() {
+        let open_orphans = {
+            let on_navigate = on_navigate.clone();
+            Callback::from(move |_: MouseEvent| on_navigate.emit(vec![state::ORPHANS_ID]))
+        };
+        list_children.push(html! {
+            <li class="item" key="orphans" onclick={open_orphans}>
+                <div class="item-main">
+                    { components::list_icon() }
+                    <span class="item-text">{ "Orphans" }</span>
+                    <span class="child-count">{ state.orphan_items().len() }</span>
+                </div>
+            </li>
+        });
+    }
     if dragging.is_some() {
         list_children.push(html! {
             <li key="drop-gap" class={classes!("drop-gap", (*hover_end).then_some("drag-over"))}></li>
@@ -558,7 +576,7 @@ fn app() -> Html {
                 <Breadcrumbs
                     state={state.clone()}
                     path={(*path).clone()}
-                    on_navigate={on_navigate}
+                    on_navigate={on_navigate.clone()}
                     dragging={dragging.is_some()}
                     hover_nest_item={*hover_nest_item}
                     hover_root={*hover_root}
@@ -579,9 +597,11 @@ fn app() -> Html {
                         }}
                     />
                 }
-                <div class="composer-bar">
-                    <Composer state={state.clone()} parent={current_parent} search={search.clone()} />
-                </div>
+                if !in_orphans {
+                    <div class="composer-bar">
+                        <Composer state={state.clone()} parent={current_parent} search={search.clone()} />
+                    </div>
+                }
                 <div class="list-toolbar">
                     <label class="show-hidden">
                         <input type="checkbox" checked={*show_hidden} onclick={toggle_hidden} />
@@ -590,7 +610,11 @@ fn app() -> Html {
                     <button class="copy-list-btn" onclick={copy_list}>{ "Copy list" }</button>
                 </div>
                 <ul class="items">{ for list_children }</ul>
-                if rows.is_empty() {
+                if rows.is_empty() && current_parent.is_none() && query_lower.is_none() {
+                    <p class="empty">{ "Nothing here yet - add an item above." }</p>
+                } else if rows.is_empty() && in_orphans {
+                    <p class="empty">{ "No orphans." }</p>
+                } else if rows.is_empty() {
                     <p class="empty">{ "Nothing here yet - add an item above." }</p>
                 }
             }

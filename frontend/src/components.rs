@@ -31,7 +31,7 @@ fn note_icon() -> Html {
 }
 
 /// Icon shown for a task that has children - it's really a sub-list now, not a checkable item.
-fn list_icon() -> Html {
+pub fn list_icon() -> Html {
     html! {
         <svg class="list-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
             <circle cx="2.2" cy="3.2" r="1" fill="currentColor"/>
@@ -841,7 +841,11 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
         <nav class="breadcrumbs">
             <a class={home_class} onclick={home} data-drop-root={home_drop_root}>{ "Lists" }</a>
             { for props.path.iter().enumerate().map(|(idx, id)| {
-                let name = props.state.items.get(id).map(|i| i.text.clone()).unwrap_or_default();
+                let name = if *id == crate::state::ORPHANS_ID {
+                    "Orphans".to_string()
+                } else {
+                    props.state.items.get(id).map(|i| i.text.clone()).unwrap_or_default()
+                };
                 let path = props.path.clone();
                 let on_navigate = props.on_navigate.clone();
                 let target: Vec<Uuid> = path[..=idx].to_vec();
@@ -860,7 +864,11 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
                 }
             }) }
             <span class="crumb-count" title="Items in this list, including nested ones">
-                { props.state.live_descendant_count(props.path.last().copied()) }
+                { if props.path.last() == Some(&crate::state::ORPHANS_ID) {
+                    props.state.orphan_items().len()
+                } else {
+                    props.state.live_descendant_count(props.path.last().copied())
+                } }
             </span>
         </nav>
     }
