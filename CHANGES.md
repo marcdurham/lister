@@ -190,3 +190,9 @@
   which also recovers the currently missing lists. Conflict resolution is unchanged
   (still last-write-wins on `updated_at`). Added a regression test; it wasn't run here
   because the test database needs credentials this session doesn't have.
+
+## 2026-09-30 14:25 PDT
+- Added an item count to the right of the breadcrumbs, in an amber pill. It counts every
+  non-deleted item under the current list at every nesting depth (an item that sits in
+  several lists counts once); at the top level it counts everything across all lists.
+  Uses the new `AppState::live_descendant_count`, with a unit test.

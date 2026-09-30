@@ -307,6 +307,16 @@ header {
     cursor: pointer;
 }
 
+.breadcrumbs .crumb-count {
+    margin-left: 0.6rem;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    background: #fff1d6;
+    color: #b45309;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
 .breadcrumbs .sep {
     margin: 0 0.35rem;
     color: #9aa5b1;
@@ -1273,6 +1283,10 @@ header {
     }
     .remote-bar-last {
         color: #9aa5b1;
+    }
+    .breadcrumbs .crumb-count {
+        background: #4a3a1a;
+        color: #fbbf24;
     }
     body {
         background: #1f2933;

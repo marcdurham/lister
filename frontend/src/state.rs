@@ -188,6 +188,32 @@ impl AppState {
         result
     }
 
+    /// Number of distinct live (non-deleted) items anywhere under `root` - or under the whole
+    /// top level when `root` is `None` - at every depth, counting an item shared by several
+    /// lists once.
+    pub fn live_descendant_count(&self, root: Option<Uuid>) -> usize {
+        let live_children = |parent: Option<Uuid>| -> Vec<Uuid> {
+            self.memberships
+                .values()
+                .filter(|m| m.parent_id == parent && m.deleted_at.is_none())
+                .filter(|m| {
+                    self.items
+                        .get(&m.item_id)
+                        .is_some_and(|i| i.deleted_at.is_none())
+                })
+                .map(|m| m.item_id)
+                .collect()
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = live_children(root);
+        while let Some(id) = stack.pop() {
+            if seen.insert(id) {
+                stack.extend(live_children(Some(id)));
+            }
+        }
+        seen.len()
+    }
+
     /// Render `root` (or the whole top level, when `root` is `None`) as a markdown list of
     /// just the item titles, with children indented under their parents.
     pub fn copy_as_markdown(&self, root: Option<Uuid>) -> String {
@@ -775,6 +801,29 @@ mod tests {
             syncing: false,
             sync_info: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn live_descendant_count_spans_depths_and_skips_deleted() {
+        let parent = item("Errands", false, true, false);
+        let child = item("Buy milk", false, false, false);
+        let grandchild = item("Skim", false, false, false);
+        let mut trashed = item("Old", false, false, false);
+        trashed.deleted_at = Some(chrono::Utc::now());
+        let (pid, cid, gid, tid) = (parent.id, child.id, grandchild.id, trashed.id);
+        let mut state = state_with(vec![parent]);
+        for (it, par) in [(child, pid), (grandchild, cid), (trashed, pid)] {
+            let m = Membership::new(it.id, Some(par), 0.0);
+            state.memberships.insert(m.id, m);
+            state.items.insert(it.id, it);
+        }
+        // A second membership of the same child must not double count.
+        let dup = Membership::new(cid, None, 5.0);
+        state.memberships.insert(dup.id, dup);
+        let _ = (gid, tid);
+        assert_eq!(state.live_descendant_count(Some(pid)), 2);
+        assert_eq!(state.live_descendant_count(Some(cid)), 1);
+        assert_eq!(state.live_descendant_count(None), 3);
     }
 
     #[test]

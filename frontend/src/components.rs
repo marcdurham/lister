@@ -859,6 +859,9 @@ pub fn breadcrumbs(props: &BreadcrumbsProps) -> Html {
                     </>
                 }
             }) }
+            <span class="crumb-count" title="Items in this list, including nested ones">
+                { props.state.live_descendant_count(props.path.last().copied()) }
+            </span>
         </nav>
     }
 }
