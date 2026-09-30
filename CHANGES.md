@@ -202,3 +202,8 @@
   root list, and a virtual "Orphans" list at the end of the root list that holds every live
   item belonging to no list (browsable, and checkable as a target). Search in the manager
   already covers all items, orphans included. Added `AppState::orphan_items`.
+
+## 2026-09-30 (2)
+- Main view search from the root list now also finds orphan items (items in no list).
+  They appear as non-draggable rows using a placeholder membership, and open in the
+  item editor like any other result.

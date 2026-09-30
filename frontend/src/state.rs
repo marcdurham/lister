@@ -89,7 +89,8 @@ impl AppState {
     }
 
     /// Every live item anywhere in the hierarchy whose text contains `query` (already
-    /// lowercased and non-empty), each paired with one of its live memberships - used so
+    /// lowercased and non-empty), each paired with one of its live memberships (or a
+    /// placeholder for an orphan with none) - used so
     /// a search from the root list finds items nested inside any list, not just top-level
     /// ones. Depth is always 1, marking these as non-drag-and-drop rows the same way a
     /// nested-children row is: they aren't siblings of one another in any real list, so
@@ -103,6 +104,13 @@ impl AppState {
             .filter(|item| item.text.to_lowercase().contains(query))
             .filter(|item| include_hidden || item.is_time_visible(now))
             .filter_map(|item| {
+                if self.active_membership_count(item.id) == 0 {
+                    // Orphan: no real membership exists, so synthesize a placeholder
+                    // (keyed by the item's id) that never matches a stored membership.
+                    let mut placeholder = Membership::new(item.id, None, 0.0);
+                    placeholder.id = item.id;
+                    return Some((item.clone(), placeholder, 1));
+                }
                 let membership = self.memberships.values().find(|m| {
                     m.item_id == item.id
                         && m.deleted_at.is_none()
