@@ -212,3 +212,17 @@
 - Main view: the root list now ends with a virtual "Orphans" row (with a count) that opens
   a list of all items belonging to no list. It has its own breadcrumb and count, hides the
   add-item composer, and its rows are non-draggable (placeholder memberships).
+
+## 2026-10-05 23:59 PDT
+- New "Link" item type (composer kind "Link"; also "Convert to link" in the editor). A link
+  holds a URL (new `Item::is_link`/`Item::url`, migration 0007) and tapping its row opens the
+  URL in a new tab; the edit button still opens the editor, which has a URL field and an
+  open-link button. A link's text may be left blank, in which case the URL itself is shown
+  (`Item::display_text`, also used by search). Markdown export writes links as `[text](url)`.
+- Tasks now have to be opened to be completed: the row checkbox is display-only and tapping
+  it opens the item editor like the rest of the row. The editor has a "Done" checkbox for
+  tasks that applies immediately.
+- List manager: a new "In these lists" section at the top shows every list the item is in
+  (unchecked ones stay until the manager closes, so an accidental uncheck is easy to undo),
+  ordered highest-level first. Browse and search rows put the item's current lists first,
+  then higher-level lists before deeper ones (`AppState::min_depths`, with a unit test).

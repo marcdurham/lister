@@ -42,6 +42,11 @@ pub struct Item {
     /// of just direct children.
     #[serde(default)]
     pub show_nested_children: bool,
+    /// A link item: tapping it navigates to `url` instead of opening it.
+    #[serde(default)]
+    pub is_link: bool,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// A time unit used by both the show-before-due and hide-after-created offsets, and by
@@ -89,6 +94,17 @@ impl Item {
             recur_amount: None,
             recur_unit: None,
             show_nested_children: false,
+            is_link: false,
+            url: None,
+        }
+    }
+
+    /// What a row shows as the item's title: a link with blank text shows its URL.
+    pub fn display_text(&self) -> &str {
+        if self.is_link && self.text.trim().is_empty() {
+            self.url.as_deref().unwrap_or("")
+        } else {
+            &self.text
         }
     }
 
@@ -375,6 +391,16 @@ mod tests {
 
         assert!(item.advance_recurrence(now));
         assert_eq!(item.due_at, Some(now + Duration::days(2)));
+    }
+
+    #[test]
+    fn display_text_falls_back_to_url_for_blank_link() {
+        let mut item = Item::new("".into(), false);
+        item.is_link = true;
+        item.url = Some("https://example.com".into());
+        assert_eq!(item.display_text(), "https://example.com");
+        item.text = "Example".into();
+        assert_eq!(item.display_text(), "Example");
     }
 
     #[test]

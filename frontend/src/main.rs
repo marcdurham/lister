@@ -446,7 +446,7 @@ fn app() -> Html {
     };
     if !searching_globally {
         if let Some(query) = &query_lower {
-            rows.retain(|(item, _, _)| item.text.to_lowercase().contains(query));
+            rows.retain(|(item, _, _)| item.display_text().to_lowercase().contains(query));
         }
     }
 

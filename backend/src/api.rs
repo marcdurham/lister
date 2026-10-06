@@ -20,9 +20,9 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
             id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at, owner_id,
             due_at, show_after, show_before_due_amount, show_before_due_unit,
             hide_after, hide_after_created_amount, hide_after_created_unit,
-            recur_amount, recur_unit, show_nested_children
+            recur_amount, recur_unit, show_nested_children, is_link, url
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         ON CONFLICT (id) DO UPDATE SET
             text = EXCLUDED.text,
             notes = EXCLUDED.notes,
@@ -41,6 +41,8 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
             recur_amount = EXCLUDED.recur_amount,
             recur_unit = EXCLUDED.recur_unit,
             show_nested_children = EXCLUDED.show_nested_children,
+            is_link = EXCLUDED.is_link,
+            url = EXCLUDED.url,
             server_updated_at = clock_timestamp()
         WHERE items.updated_at < EXCLUDED.updated_at AND items.owner_id = EXCLUDED.owner_id
         "#,
@@ -64,6 +66,8 @@ async fn upsert_item(pool: &PgPool, item: &Item, owner_id: Uuid) -> sqlx::Result
         item.recur_amount,
         item.recur_unit,
         item.show_nested_children,
+        item.is_link,
+        item.url,
     )
     .execute(pool)
     .await?;
@@ -152,7 +156,7 @@ async fn sync(pool: web::Data<PgPool>, req: HttpRequest, body: web::Json<SyncReq
         r#"SELECT id, text, notes, is_note, is_list, done, created_at, updated_at, deleted_at,
                   due_at, show_after, show_before_due_amount, show_before_due_unit,
                   hide_after, hide_after_created_amount, hide_after_created_unit,
-                  recur_amount, recur_unit, show_nested_children
+                  recur_amount, recur_unit, show_nested_children, is_link, url
            FROM items WHERE (server_updated_at > $1 OR updated_at > $1) AND owner_id = $2"#,
         since,
         owner_id,

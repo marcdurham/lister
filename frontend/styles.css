@@ -196,7 +196,34 @@ header {
     cursor: pointer;
 }
 
-.trash-btn .child-count {
+.trash-btn .link-icon {
+    color: #0b7a5f;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+}
+
+/* A task's row checkbox only shows its state: taps go through to the row, which opens
+   the editor, where the task is actually marked done. */
+.row-check {
+    pointer-events: none;
+}
+
+.editor-done {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.75rem;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.editor-done input {
+    width: 1.2rem;
+    height: 1.2rem;
+}
+
+.child-count {
     position: absolute;
     top: -0.35rem;
     right: -0.35rem;
@@ -576,6 +603,7 @@ header {
 .item-main > input[type="checkbox"],
 .item-main > .note-icon,
 .item-main > .list-icon,
+.item-main > .link-icon,
 .item-main > .nest-hover-icon {
     margin-top: 0.2em;
 }
@@ -870,6 +898,19 @@ header {
     border: 1px solid #cbd2d9;
     border-radius: 4px;
     font-size: 1rem;
+}
+
+.list-manager-heading {
+    margin: 0.25rem 0 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #616e7c;
+}
+
+.list-manager-selected {
+    margin-bottom: 0.75rem;
 }
 
 .list-manager-list .item.subtle {

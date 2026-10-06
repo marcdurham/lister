@@ -44,6 +44,22 @@ pub fn list_icon() -> Html {
     }
 }
 
+fn link_icon() -> Html {
+    html! {
+        <svg class="link-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.3-2.3a2.6 2.6 0 0 0-3.7-3.7l-1 1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+            <path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.2 9.1a2.6 2.6 0 0 0 3.7 3.7l1-1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+        </svg>
+    }
+}
+
+/// Opens a link item's URL in a new tab.
+fn open_url(url: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.open_with_url_and_target_and_features(url, "_blank", "noopener");
+    }
+}
+
 pub(crate) fn trash_icon() -> Html {
     html! {
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -428,6 +444,7 @@ enum ItemKind {
     Note,
     Task,
     List,
+    Link,
 }
 
 impl ItemKind {
@@ -436,6 +453,7 @@ impl ItemKind {
             ItemKind::Note => "note",
             ItemKind::Task => "task",
             ItemKind::List => "list",
+            ItemKind::Link => "link",
         }
     }
 
@@ -443,6 +461,7 @@ impl ItemKind {
         match s {
             "task" => ItemKind::Task,
             "list" => ItemKind::List,
+            "link" => ItemKind::Link,
             _ => ItemKind::Note,
         }
     }
@@ -650,10 +669,17 @@ pub fn composer(props: &ComposerProps) -> Html {
             if text.is_empty() {
                 return;
             }
+            // A link's composer input is its URL; the title starts blank (so the URL is shown).
+            let (text, url) = if *kind == ItemKind::Link {
+                (String::new(), Some(text))
+            } else {
+                (text, None)
+            };
             state.dispatch(Action::AddItem {
                 text,
                 is_note: *kind == ItemKind::Note,
                 is_list: *kind == ItemKind::List,
+                url,
                 parent,
             });
             draft.set(String::new());
@@ -716,6 +742,7 @@ pub fn composer(props: &ComposerProps) -> Html {
                         ItemKind::Note => "Add a note...",
                         ItemKind::Task => "Add a task...",
                         ItemKind::List => "Add a list...",
+                        ItemKind::Link => "Add a link URL...",
                     }}
                     value={(*draft).clone()}
                     oninput={on_input}
@@ -725,6 +752,7 @@ pub fn composer(props: &ComposerProps) -> Html {
                     <option value="note" selected={*kind == ItemKind::Note}>{ "Note" }</option>
                     <option value="task" selected={*kind == ItemKind::Task}>{ "Task" }</option>
                     <option value="list" selected={*kind == ItemKind::List}>{ "List" }</option>
+                    <option value="link" selected={*kind == ItemKind::Link}>{ "Link" }</option>
                 </select>
                 <button {onclick}>{ "Add" }</button>
             </div>
@@ -1082,22 +1110,14 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let membership = &props.membership;
     let state = props.state.clone();
     let child_count = state.direct_child_count(item.id);
-    let is_list = !item.is_note && (item.is_list || child_count > 0);
+    let is_list = !item.is_note && !item.is_link && (item.is_list || child_count > 0);
     let is_dragging_this = props.dragging == Some(membership.id);
     let drag_active = props.dragging.is_some();
     let has_dates = item.due_at.is_some() || item.show_after.is_some() || item.hide_after.is_some();
 
-    let toggle_done = {
-        let state = state.clone();
-        let id = item.id;
-        Callback::from(move |e: MouseEvent| {
-            e.stop_propagation();
-            state.dispatch(Action::ToggleDone(id));
-        })
-    };
-
-    // Tapping the row opens the sub-list if this item is (or acts as) a list, otherwise
-    // edits it - unless the tap is actually the tail end of a drag (the browser still
+    // Tapping the row opens the sub-list if this item is (or acts as) a list, navigates to
+    // the URL if it's a link, otherwise edits it (so a task has to be opened before it can
+    // be marked done - its row checkbox is display-only) - unless the tap is actually the tail end of a drag (the browser still
     // fires a click right after pointerup), in which case it's swallowed instead.
     let open_or_edit = {
         let on_open = props.on_open.clone();
@@ -1106,12 +1126,18 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         let id = item.id;
         let membership_id = membership.id;
         let navigate_in = is_list;
+        let link_url = item
+            .url
+            .clone()
+            .filter(|u| item.is_link && !u.trim().is_empty());
         Callback::from(move |_: MouseEvent| {
             if *suppress_click.borrow() {
                 *suppress_click.borrow_mut() = false;
                 return;
             }
-            if navigate_in {
+            if let Some(url) = &link_url {
+                open_url(url);
+            } else if navigate_in {
                 on_open.emit(id);
             } else {
                 on_edit.emit((id, membership_id));
@@ -1449,18 +1475,22 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                     <span class="nest-hover-icon" aria-hidden="true">{ chevron_icon(16) }</span>
                 } else if item.is_note {
                     { note_icon() }
+                } else if item.is_link {
+                    { link_icon() }
                 } else if is_list {
                     { list_icon() }
                 } else {
+                    // Display-only: taps fall through to the row, which opens the editor.
                     <input
                         type="checkbox"
+                        class="row-check"
                         checked={item.done}
-                        onclick={toggle_done}
-                        onpointerdown={stop_pointer_down.clone()}
+                        tabindex="-1"
+                        aria-hidden="true"
                     />
                 }
                 <div class="item-title-group">
-                    <span class="item-text">{ &item.text }</span>
+                    <span class="item-text">{ item.display_text() }</span>
                     if let Some(preview) = notes_preview {
                         <span class="item-notes-preview">{ preview }</span>
                     }
@@ -1529,6 +1559,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     let membership = state.memberships.get(&props.membership_id).cloned();
 
     let text = use_state(|| item.text.clone());
+    let url = use_state(|| item.url.clone().unwrap_or_default());
     let notes = use_state(|| item.notes.clone().unwrap_or_default());
     // Once true, the notes field stays large for the rest of this editing session.
     let large_notes = use_state(|| item.is_note || item.notes.is_some());
@@ -1596,6 +1627,31 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
             let input: HtmlInputElement = e.target_unchecked_into();
             text.set(input.value());
         })
+    };
+
+    let on_url_input = {
+        let url = url.clone();
+        Callback::from(move |e: InputEvent| {
+            let input: HtmlInputElement = e.target_unchecked_into();
+            url.set(input.value());
+        })
+    };
+
+    let open_link = {
+        let url = url.clone();
+        Callback::from(move |_: MouseEvent| {
+            let target = url.trim();
+            if !target.is_empty() {
+                open_url(target);
+            }
+        })
+    };
+
+    // Applied immediately (like Hide/Show), not on Save.
+    let toggle_done = {
+        let state = state.clone();
+        let id = item.id;
+        Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleDone(id)))
     };
 
     let on_notes_input = {
@@ -1783,6 +1839,8 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         let state = state.clone();
         let id = item.id;
         let text = text.clone();
+        let url = url.clone();
+        let is_link = item.is_link;
         let notes = notes.clone();
         let due_input = due_input.clone();
         let show_mode = show_mode.clone();
@@ -1799,10 +1857,17 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         let on_close = props.on_close.clone();
         Callback::from(move |_: MouseEvent| {
             let trimmed = text.trim().to_string();
-            if !trimmed.is_empty() {
+            // A link's text may be blank - its row then shows the URL instead.
+            if !trimmed.is_empty() || is_link {
                 state.dispatch(Action::UpdateText {
                     item_id: id,
                     text: trimmed,
+                });
+            }
+            if is_link {
+                state.dispatch(Action::UpdateUrl {
+                    item_id: id,
+                    url: (*url).clone(),
                 });
             }
             state.dispatch(Action::UpdateNotes {
@@ -1854,7 +1919,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         })
     };
 
-    let convert_to = |is_note: bool, is_list: bool| {
+    let convert_to = |is_note: bool, is_list: bool, is_link: bool| {
         let state = state.clone();
         let id = item.id;
         Callback::from(move |_: MouseEvent| {
@@ -1862,12 +1927,16 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 item_id: id,
                 is_note,
                 is_list,
+                is_link,
             })
         })
     };
 
+    let is_task = !item.is_note && !item.is_list && !item.is_link;
     let kind_label = if item.is_note {
         "note"
+    } else if item.is_link {
+        "link"
     } else if item.is_list {
         "list"
     } else {
@@ -1929,7 +1998,15 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     html! {
         <div class="editor-overlay item-editor-page">
             <div class={classes!("editor", "item-editor", (*large_notes).then_some("editor-large"))}>
-                <h2 class="editor-title" style={title_font_size(&text)}>{ (*text).clone() }</h2>
+                <h2 class="editor-title" style={title_font_size(&text)}>
+                    { if item.is_link && text.trim().is_empty() { (*url).clone() } else { (*text).clone() } }
+                </h2>
+                if is_task {
+                    <label class="editor-done">
+                        <input type="checkbox" checked={item.done} onclick={toggle_done} />
+                        { if item.recur_amount.is_some() { " Done (repeats)" } else { " Done" } }
+                    </label>
+                }
                 <label class="editor-field">
                     <span class="editor-field-label">
                         { "Text" }
@@ -1943,8 +2020,24 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             { copy_icon() }
                         </button>
                     </span>
-                    <input type="text" value={(*text).clone()} oninput={on_text_input} />
+                    <input
+                        type="text"
+                        value={(*text).clone()}
+                        oninput={on_text_input}
+                        placeholder={item.is_link.then_some("Optional - the URL is shown when blank")}
+                    />
                 </label>
+                if item.is_link {
+                    <label class="editor-field">
+                        <span class="editor-field-label">
+                            { "URL" }
+                            <button type="button" class="copy-btn" onclick={open_link} title="Open link" aria-label="Open link">
+                                { link_icon() }
+                            </button>
+                        </span>
+                        <input type="url" value={(*url).clone()} oninput={on_url_input} placeholder="https://..." />
+                    </label>
+                }
                 <label class="editor-field editor-notes-field">
                     <span>{ "Notes" }</span>
                     <textarea
@@ -1957,14 +2050,17 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 <div class="editor-type">
                     <span>{ format!("Currently a {kind_label}") }</span>
                     <div class="editor-type-actions">
-                        if !item.is_note && !item.is_list {
-                            <button onclick={convert_to(true, false)}>{ "Convert to note" }</button>
+                        if !item.is_note && (item.is_link || !item.is_list) {
+                            <button onclick={convert_to(true, false, false)}>{ "Convert to note" }</button>
                         }
-                        if !item.is_list {
-                            <button onclick={convert_to(false, true)}>{ "Convert to list" }</button>
+                        if !item.is_list || item.is_link {
+                            <button onclick={convert_to(false, true, false)}>{ "Convert to list" }</button>
                         }
-                        if item.is_note || item.is_list {
-                            <button onclick={convert_to(false, false)}>{ "Convert to task" }</button>
+                        if !is_task {
+                            <button onclick={convert_to(false, false, false)}>{ "Convert to task" }</button>
+                        }
+                        if !item.is_link {
+                            <button onclick={convert_to(false, false, true)}>{ "Convert to link" }</button>
                         }
                     </div>
                 </div>
@@ -2081,7 +2177,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 if *confirm_remove {
                     <div class="confirm-remove">
                         <p>
-                            { "Remove \u{201c}" }{ &item.text }{ "\u{201d}?" }
+                            { "Remove \u{201c}" }{ item.display_text() }{ "\u{201d}?" }
                             if removable_children > 0 {
                                 { format!(" It has {removable_children} item(s) that only live here.") }
                             }
@@ -2155,7 +2251,9 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
 
     let path = use_state(Vec::<Uuid>::new);
     let query = use_state(String::new);
-    let pending = use_state(|| {
+    // The lists the item was in when the manager opened. Rows are ordered by this rather
+    // than by `pending`, so they don't jump around as boxes are checked and unchecked.
+    let original = use_memo(item_id, |_| {
         state
             .memberships
             .values()
@@ -2163,6 +2261,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
             .map(|m| m.parent_id)
             .collect::<HashSet<Option<Uuid>>>()
     });
+    let pending = use_state(|| (*original).clone());
     let in_orphans = use_state(|| false);
 
     // Never allow the item to become its own ancestor.
@@ -2228,8 +2327,44 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
 
     let query_lower = query.trim().to_lowercase();
     let current_parent = path.last().copied();
+    let depths = state.min_depths();
+    let depth_of = |id: Uuid| depths.get(&id).copied().unwrap_or(usize::MAX);
+    let was_selected = |id: Uuid| original.contains(&Some(id));
 
-    let rows: Vec<Item> = if query_lower.is_empty() && *in_orphans {
+    // Lists the item is (or was, when the manager opened) in, highest level first, shown
+    // above everything else. Unchecked ones stay put so an accidental uncheck is easy to undo.
+    let mut selected: Vec<Option<Item>> = original
+        .iter()
+        .chain(pending.iter())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .filter_map(|parent| match parent {
+            None => Some(None),
+            Some(pid) => state
+                .items
+                .get(pid)
+                .filter(|i| i.deleted_at.is_none() && !excluded.contains(&i.id))
+                .map(|i| Some(i.clone())),
+        })
+        .collect();
+    selected.sort_by_key(|row| match row {
+        None => (0, 0, String::new()),
+        Some(i) => (1, depth_of(i.id), i.display_text().to_lowercase()),
+    });
+
+    let toggle_pending = |parent: Option<Uuid>| {
+        let pending = pending.clone();
+        Callback::from(move |e: MouseEvent| {
+            e.stop_propagation();
+            let mut next = (*pending).clone();
+            if !next.remove(&parent) {
+                next.insert(parent);
+            }
+            pending.set(next);
+        })
+    };
+
+    let mut rows: Vec<Item> = if query_lower.is_empty() && *in_orphans {
         state
             .orphan_items()
             .into_iter()
@@ -2248,13 +2383,18 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
             .values()
             .filter(|i| i.deleted_at.is_none())
             .filter(|i| !excluded.contains(&i.id))
-            .filter(|i| i.text.to_lowercase().contains(&query_lower))
+            .filter(|i| i.display_text().to_lowercase().contains(&query_lower))
             .cloned()
             .collect();
-        matches.sort_by(|a, b| a.text.to_lowercase().cmp(&b.text.to_lowercase()));
-        matches.truncate(50);
+        matches.sort_by_key(|i| i.display_text().to_lowercase());
         matches
     };
+    // Lists the item is already in come first, then higher-level lists before deeper ones;
+    // the sort is stable, so ties keep their list position (or, when searching, A-Z order).
+    rows.sort_by_key(|i| (!was_selected(i.id), depth_of(i.id)));
+    if !query_lower.is_empty() {
+        rows.truncate(50);
+    }
 
     html! {
         <div class="trash-view list-manager">
@@ -2263,12 +2403,12 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                 <button onclick={cancel.clone()}>{ "Back" }</button>
             </div>
             <div class="list-manager-current">
-                if item.is_note { { note_icon() } } else if item.is_list || state.direct_child_count(item_id) > 0 {
+                if item.is_note { { note_icon() } } else if item.is_link { { link_icon() } } else if item.is_list || state.direct_child_count(item_id) > 0 {
                     { list_icon() }
                 } else {
                     <input type="checkbox" checked={item.done} disabled=true />
                 }
-                <span class="item-text">{ &item.text }</span>
+                <span class="item-text">{ item.display_text() }</span>
             </div>
             <input
                 type="text"
@@ -2277,6 +2417,31 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                 value={(*query).clone()}
                 oninput={on_query_input}
             />
+            if !selected.is_empty() {
+                <h3 class="list-manager-heading">{ "In these lists" }</h3>
+                <ul class="items list-manager-list list-manager-selected">
+                    { for selected.iter().map(|row| {
+                        let parent = row.as_ref().map(|i| i.id);
+                        let label = row
+                            .as_ref()
+                            .map(|i| i.display_text().to_string())
+                            .unwrap_or_else(|| "Top level (root list)".to_string());
+                        html! {
+                            <li class="item" key={parent.map(|p| p.to_string()).unwrap_or_default()}>
+                                <div class="item-main" onclick={toggle_pending(parent)}>
+                                    <input
+                                        type="checkbox"
+                                        checked={pending.contains(&parent)}
+                                        onclick={toggle_pending(parent)}
+                                    />
+                                    { list_icon() }
+                                    <span class="item-text">{ label }</span>
+                                </div>
+                            </li>
+                        }
+                    }) }
+                </ul>
+            }
             if query_lower.is_empty() {
                 <Breadcrumbs state={state.clone()} path={(*path).clone()} on_navigate={on_navigate.clone()} />
                 if *in_orphans {
@@ -2297,17 +2462,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                             <input
                                 type="checkbox"
                                 checked={pending.contains(&None)}
-                                onclick={{
-                                    let pending = pending.clone();
-                                    Callback::from(move |e: MouseEvent| {
-                                        e.stop_propagation();
-                                        let mut next = (*pending).clone();
-                                        if !next.remove(&None) {
-                                            next.insert(None);
-                                        }
-                                        pending.set(next);
-                                    })
-                                }}
+                                onclick={toggle_pending(None)}
                             />
                             { list_icon() }
                             <span class="item-text">{ "Top level (root list)" }</span>
@@ -2322,17 +2477,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                     let child_count = state.direct_child_count(row_id);
                     let has_children = child_count > 0;
 
-                    let toggle = {
-                        let pending = pending.clone();
-                        Callback::from(move |e: MouseEvent| {
-                            e.stop_propagation();
-                            let mut next = (*pending).clone();
-                            if !next.remove(&Some(row_id)) {
-                                next.insert(Some(row_id));
-                            }
-                            pending.set(next);
-                        })
-                    };
+                    let toggle = toggle_pending(Some(row_id));
 
                     let open = {
                         let path = path.clone();
@@ -2359,7 +2504,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                                 } else if row_item.is_list || has_children {
                                     { list_icon() }
                                 }
-                                <span class="item-text">{ &row_item.text }</span>
+                                <span class="item-text">{ row_item.display_text() }</span>
                                 if child_count > 0 {
                                     <span class="child-count">{ child_count }</span>
                                 }
@@ -2430,7 +2575,7 @@ pub fn trash_view(props: &TrashViewProps) -> Html {
                                 if item.is_note { { note_icon() } } else {
                                     <input type="checkbox" checked={item.done} disabled=true />
                                 }
-                                <span class="item-text">{ &item.text }</span>
+                                <span class="item-text">{ item.display_text() }</span>
                             </div>
                             <div class="item-actions">
                                 <button onclick={restore}>{ "Restore" }</button>

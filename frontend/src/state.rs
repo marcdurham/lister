@@ -104,7 +104,7 @@ impl AppState {
             .items
             .values()
             .filter(|item| item.deleted_at.is_none())
-            .filter(|item| item.text.to_lowercase().contains(query))
+            .filter(|item| item.display_text().to_lowercase().contains(query))
             .filter(|item| include_hidden || item.is_time_visible(now))
             .filter_map(|item| {
                 if self.active_membership_count(item.id) == 0 {
@@ -224,6 +224,37 @@ impl AppState {
         result
     }
 
+    /// Shallowest nesting depth of every live item reachable from the top level: 0 for a
+    /// top-level item, 1 for its children, and so on. An item in several lists gets the
+    /// depth of its highest one; items unreachable from the top level (orphans and their
+    /// descendants) are absent.
+    pub fn min_depths(&self) -> HashMap<Uuid, usize> {
+        let mut children: HashMap<Option<Uuid>, Vec<Uuid>> = HashMap::new();
+        for m in self.memberships.values().filter(|m| m.deleted_at.is_none()) {
+            if self.items.get(&m.item_id).is_some_and(|i| i.deleted_at.is_none()) {
+                children.entry(m.parent_id).or_default().push(m.item_id);
+            }
+        }
+        let mut depths = HashMap::new();
+        let mut frontier: Vec<Uuid> = children.get(&None).cloned().unwrap_or_default();
+        let mut depth = 0;
+        while !frontier.is_empty() {
+            let mut next = Vec::new();
+            for id in frontier {
+                if depths.contains_key(&id) {
+                    continue;
+                }
+                depths.insert(id, depth);
+                if let Some(kids) = children.get(&Some(id)) {
+                    next.extend(kids.iter().copied());
+                }
+            }
+            frontier = next;
+            depth += 1;
+        }
+        depths
+    }
+
     /// Number of distinct live (non-deleted) items anywhere under `root` - or under the whole
     /// top level when `root` is `None` - at every depth, counting an item shared by several
     /// lists once.
@@ -264,11 +295,20 @@ impl AppState {
             out.push_str("- ");
             // Mirrors the row's own list detection: an item with children renders (and
             // exports) as a list even if `is_list` was never explicitly set on it.
-            let is_task = !item.is_note && !item.is_list && self.direct_child_count(item.id) == 0;
+            let is_task = !item.is_note
+                && !item.is_list
+                && !item.is_link
+                && self.direct_child_count(item.id) == 0;
             if is_task {
                 out.push_str(if item.done { "DONE: " } else { "TODO: " });
             }
-            out.push_str(&item.text);
+            match item.url.as_deref().filter(|_| item.is_link) {
+                Some(url) if !item.text.trim().is_empty() => {
+                    out.push_str(&format!("[{}]({url})", item.text));
+                }
+                Some(url) => out.push_str(url),
+                None => out.push_str(&item.text),
+            }
             out.push('\n');
             self.write_markdown_children(Some(item.id), depth + 1, out);
         }
@@ -311,10 +351,12 @@ pub enum Action {
     /// show/hide window has just opened or closed appear/disappear on their own instead
     /// of waiting for the next real edit or a page refresh - see `main::visibility_tick_loop`.
     Tick,
+    /// `url` set makes the new item a link (its `text` may then be blank).
     AddItem {
         text: String,
         is_note: bool,
         is_list: bool,
+        url: Option<String>,
         parent: Option<Uuid>,
     },
     ToggleDone(Uuid),
@@ -364,10 +406,15 @@ pub enum Action {
         item_id: Uuid,
         is_note: bool,
         is_list: bool,
+        is_link: bool,
     },
     UpdateText {
         item_id: Uuid,
         text: String,
+    },
+    UpdateUrl {
+        item_id: Uuid,
+        url: String,
     },
     SetOnline(bool),
     SetSyncing(bool),
@@ -414,10 +461,13 @@ impl AppState {
                 text,
                 is_note,
                 is_list,
+                url,
                 parent,
             } => {
                 let mut item = Item::new(text, is_note);
                 item.is_list = is_list;
+                item.is_link = url.is_some();
+                item.url = url;
                 // New items go to the top of the list, not the bottom.
                 let next_pos = self
                     .children(parent, true)
@@ -696,14 +746,26 @@ impl AppState {
                 item_id,
                 is_note,
                 is_list,
+                is_link,
             } => {
                 let mut next = (*self).clone();
                 if let Some(item) = next.items.get_mut(&item_id) {
                     item.is_note = is_note;
                     item.is_list = is_list;
-                    if is_note || is_list {
+                    item.is_link = is_link;
+                    if is_note || is_list || is_link {
                         item.done = false;
                     }
+                    item.updated_at = Utc::now();
+                    store::put_item(item.clone());
+                }
+                Rc::new(next)
+            }
+            Action::UpdateUrl { item_id, url } => {
+                let mut next = (*self).clone();
+                if let Some(item) = next.items.get_mut(&item_id) {
+                    let url = url.trim();
+                    item.url = (!url.is_empty()).then(|| url.to_string());
                     item.updated_at = Utc::now();
                     store::put_item(item.clone());
                 }
@@ -860,6 +922,46 @@ mod tests {
         assert_eq!(state.live_descendant_count(Some(pid)), 2);
         assert_eq!(state.live_descendant_count(Some(cid)), 1);
         assert_eq!(state.live_descendant_count(None), 3);
+    }
+
+    #[test]
+    fn min_depths_uses_the_shallowest_membership() {
+        let top = item("Top", false, true, false);
+        let mid = item("Mid", false, true, false);
+        let deep = item("Deep", false, false, false);
+        let orphan = item("Orphan", false, false, false);
+        let (tid, mid_id, did, oid) = (top.id, mid.id, deep.id, orphan.id);
+        let mut state = state_with(vec![top]);
+        for (it, par) in [(mid, tid), (deep, mid_id)] {
+            let m = Membership::new(it.id, Some(par), 0.0);
+            state.memberships.insert(m.id, m);
+            state.items.insert(it.id, it);
+        }
+        state.items.insert(oid, orphan);
+        let depths = state.min_depths();
+        assert_eq!(depths.get(&tid), Some(&0));
+        assert_eq!(depths.get(&mid_id), Some(&1));
+        assert_eq!(depths.get(&did), Some(&2));
+        assert_eq!(depths.get(&oid), None);
+        // Also adding Deep directly under Top raises it to depth 1.
+        let m = Membership::new(did, Some(tid), 1.0);
+        state.memberships.insert(m.id, m);
+        assert_eq!(state.min_depths().get(&did), Some(&1));
+    }
+
+    #[test]
+    fn copy_as_markdown_writes_links() {
+        let mut titled = item("Docs", false, false, false);
+        titled.is_link = true;
+        titled.url = Some("https://example.com/docs".into());
+        let mut bare = item("", false, false, false);
+        bare.is_link = true;
+        bare.url = Some("https://example.com".into());
+        let state = state_with(vec![titled, bare]);
+        assert_eq!(
+            state.copy_as_markdown(None),
+            "- [Docs](https://example.com/docs)\n- https://example.com\n"
+        );
     }
 
     #[test]
