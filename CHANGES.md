@@ -226,3 +226,10 @@
   (unchecked ones stay until the manager closes, so an accidental uncheck is easy to undo),
   ordered highest-level first. Browse and search rows put the item's current lists first,
   then higher-level lists before deeper ones (`AppState::min_depths`, with a unit test).
+
+## 2026-10-06 14:50 PDT
+- Item editor: replaced the "Done" checkbox at the top with a green "Done" button at the
+  bottom, next to Save/Cancel. It saves any pending edits, marks the task done (or a done
+  task "Not done"), and closes the editor.
+- Fixed the previous change's CSS, which had accidentally turned the trash button's
+  `.trash-btn .child-count` badge rule into a global `.child-count` rule.

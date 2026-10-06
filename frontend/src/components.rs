@@ -1647,13 +1647,6 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         })
     };
 
-    // Applied immediately (like Hide/Show), not on Save.
-    let toggle_done = {
-        let state = state.clone();
-        let id = item.id;
-        Callback::from(move |_: MouseEvent| state.dispatch(Action::ToggleDone(id)))
-    };
-
     let on_notes_input = {
         let notes = notes.clone();
         let large_notes = large_notes.clone();
@@ -1919,6 +1912,18 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         })
     };
 
+    // Saves any pending edits, then marks the task done (or not done) and closes. Runs
+    // after the schedule update so a just-set recurrence is honored.
+    let toggle_done = {
+        let save = save.clone();
+        let state = state.clone();
+        let id = item.id;
+        Callback::from(move |e: MouseEvent| {
+            save.emit(e);
+            state.dispatch(Action::ToggleDone(id));
+        })
+    };
+
     let convert_to = |is_note: bool, is_list: bool, is_link: bool| {
         let state = state.clone();
         let id = item.id;
@@ -2001,12 +2006,6 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 <h2 class="editor-title" style={title_font_size(&text)}>
                     { if item.is_link && text.trim().is_empty() { (*url).clone() } else { (*text).clone() } }
                 </h2>
-                if is_task {
-                    <label class="editor-done">
-                        <input type="checkbox" checked={item.done} onclick={toggle_done} />
-                        { if item.recur_amount.is_some() { " Done (repeats)" } else { " Done" } }
-                    </label>
-                }
                 <label class="editor-field">
                     <span class="editor-field-label">
                         { "Text" }
@@ -2223,6 +2222,11 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                     }
                 </div>
                 <div class="editor-actions">
+                    if is_task {
+                        <button class="done-btn" onclick={toggle_done}>
+                            { if item.done { "Not done" } else { "Done" } }
+                        </button>
+                    }
                     <button onclick={save}>{ "Save" }</button>
                     <button onclick={close}>{ "Cancel" }</button>
                 </div>

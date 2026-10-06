@@ -196,7 +196,7 @@ header {
     cursor: pointer;
 }
 
-.trash-btn .link-icon {
+.link-icon {
     color: #0b7a5f;
     flex-shrink: 0;
     width: 16px;
@@ -209,21 +209,7 @@ header {
     pointer-events: none;
 }
 
-.editor-done {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    margin-bottom: 0.75rem;
-    font-size: 1rem;
-    cursor: pointer;
-}
-
-.editor-done input {
-    width: 1.2rem;
-    height: 1.2rem;
-}
-
-.child-count {
+.trash-btn .child-count {
     position: absolute;
     top: -0.35rem;
     right: -0.35rem;
@@ -1472,4 +1458,10 @@ header {
         background: #3e4c59;
         color: #cbd2d9;
     }
+}
+
+/* Last, and as specific as the dark-theme button overrides, so it stays green in both themes. */
+:root .editor-actions button.done-btn {
+    background: #2f9e44;
+    color: #fff;
 }
