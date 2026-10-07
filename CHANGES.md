@@ -233,3 +233,12 @@
   task "Not done"), and closes the editor.
 - Fixed the previous change's CSS, which had accidentally turned the trash button's
   `.trash-btn .child-count` badge rule into a global `.child-count` rule.
+
+## 2026-10-06 15:30 PDT
+- Inertial (momentum) touch scrolling now works everywhere. Item rows used
+  `touch-action: none` and scrolled the page by hand with `scrollBy`, so a flick stopped
+  dead the moment the finger lifted - and the `.item-main` rows on other pages (list
+  manager, etc.) couldn't be scrolled by touch at all. Rows now use `touch-action: pan-y`,
+  so the browser scrolls natively with momentum; the touch hold-to-drag still works,
+  with a non-passive `touchmove` listener on each draggable row cancelling the native
+  scroll only once a drag has armed.

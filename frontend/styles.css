@@ -577,7 +577,7 @@ header {
     align-items: flex-start;
     gap: 0.5rem;
     cursor: grab;
-    touch-action: none;
+    touch-action: pan-y;
 }
 
 .item-main:active {

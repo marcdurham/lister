@@ -954,13 +954,11 @@ struct DragTracker {
     pointer_id: i32,
     start_x: f64,
     start_y: f64,
-    /// Y of the last pointermove seen, used to compute a manual scroll delta.
-    last_y: f64,
     is_touch: bool,
     /// The hold elapsed and this is now a real drag.
     active: bool,
-    /// The touch moved before the hold elapsed, so we're manually scrolling the page
-    /// instead (native touch scrolling is disabled on the row so the hold can be timed).
+    /// The touch moved before the hold elapsed, so it's a (native, inertial) scroll
+    /// rather than a hold and must never arm into a drag.
     scrolling: bool,
     /// Where the row would land right now - the same slot the list is previewing, and
     /// what the drop commits, so releasing always does what the screen showed.
@@ -1105,6 +1103,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     // takes it out from under the pointer, after which the gesture's own events go to
     // whichever row is now there and this one never sees its pointerup.
     let gesture_armed = use_state_eq(|| false);
+    let item_main_ref = use_node_ref();
 
     let item = &props.item;
     let membership = &props.membership;
@@ -1157,10 +1156,10 @@ pub fn item_row(props: &ItemRowProps) -> Html {
 
     // Drag-to-reorder/nest: press anywhere on the row (other than the checkbox/buttons)
     // and hold. A mouse starts dragging as soon as it moves past a small threshold. A
-    // touch/pen needs a brief hold first - native touch scrolling is disabled on the row
-    // (see `.item-main { touch-action: none }`) so we can time that hold, and if the
-    // finger moves before it elapses we scroll the page manually instead, so scrolling a
-    // list that starts on an item still works.
+    // touch/pen needs a brief hold first. The row keeps native vertical scrolling
+    // (`.item-main { touch-action: pan-y }`), so a finger that moves before the hold
+    // elapses just scrolls the page, with the browser's own momentum; once the hold has
+    // armed a drag, the row's touchmove listener below cancels the native scroll.
     let interactive_drag = props.depth == 0;
     let on_pointer_down = {
         let tracker = tracker.clone();
@@ -1185,7 +1184,6 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 pointer_id,
                 start_x,
                 start_y,
-                last_y: start_y,
                 is_touch,
                 active: false,
                 scrolling: false,
@@ -1272,7 +1270,6 @@ pub fn item_row(props: &ItemRowProps) -> Html {
                 e.prevent_default();
                 let target = hover_target_at(x, y, membership_id);
                 t.last_target = target;
-                t.last_y = y;
                 *tracker.borrow_mut() = Some(t);
                 *pointer_pos.borrow_mut() = (x, y);
                 on_drag_hover.emit(target);
@@ -1306,25 +1303,17 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             }
 
             if t.scrolling {
-                if let Some(win) = web_sys::window() {
-                    win.scroll_by_with_x_and_y(0.0, t.last_y - y);
-                }
-                t.last_y = y;
-                *tracker.borrow_mut() = Some(t);
                 return;
             }
 
             let dx = x - t.start_x;
             let dy = y - t.start_y;
             if t.is_touch {
-                // Moved before the hold armed: hand off to a manual scroll instead.
+                // Moved before the hold armed: it's a scroll, which the browser handles
+                // natively (usually it also sends a pointercancel once it takes over).
                 if dx.abs() > TOUCH_CANCEL_THRESHOLD || dy.abs() > TOUCH_CANCEL_THRESHOLD {
                     *hold_timer.borrow_mut() = None;
                     t.scrolling = true;
-                    if let Some(win) = web_sys::window() {
-                        win.scroll_by_with_x_and_y(0.0, -dy);
-                    }
-                    t.last_y = y;
                     *tracker.borrow_mut() = Some(t);
                 }
                 return;
@@ -1336,7 +1325,6 @@ pub fn item_row(props: &ItemRowProps) -> Html {
             let target = hover_target_at(x, y, membership_id);
             t.active = true;
             t.last_target = target;
-            t.last_y = y;
             *tracker.borrow_mut() = Some(t);
             *pointer_pos.borrow_mut() = (x, y);
             on_drag_start.emit(membership_id);
@@ -1435,6 +1423,31 @@ pub fn item_row(props: &ItemRowProps) -> Html {
         });
     }
 
+    // Once a touch hold has armed a drag, stop the browser from also scrolling the page
+    // under the finger. This has to be a non-passive listener that's already on the row
+    // when the touch starts - one added later (or Yew's own, which are passive) can't
+    // cancel the scroll. Touch events keep targeting the node the touch started on even
+    // after the drag preview moves it within the list.
+    {
+        let tracker = tracker.clone();
+        let item_main_ref = item_main_ref.clone();
+        use_effect_with((), move |_| {
+            let listener = item_main_ref.cast::<web_sys::Element>().map(|el| {
+                EventListener::new_with_options(
+                    &el,
+                    "touchmove",
+                    EventListenerOptions::enable_prevent_default(),
+                    move |e| {
+                        if tracker.borrow().as_ref().is_some_and(|t| t.active) {
+                            e.prevent_default();
+                        }
+                    },
+                )
+            });
+            move || drop(listener)
+        });
+    }
+
     let stop_pointer_down = Callback::from(|e: PointerEvent| e.stop_propagation());
 
     let notes_preview = item
@@ -1464,6 +1477,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     html! {
         <li class={row_class} data-membership-id={membership_attr}>
             <div
+                ref={item_main_ref}
                 class="item-main"
                 style={indent_style}
                 onclick={open_or_edit}
