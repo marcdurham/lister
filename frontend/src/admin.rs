@@ -79,3 +79,61 @@ pub async fn delete_user(id: Uuid) -> Result<(), String> {
         Err(error_message(resp).await)
     }
 }
+
+/// A read-only API token of the logged-in account (the token itself is only shown once, on creation).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ApiToken {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+pub struct NewApiToken {
+    pub name: String,
+    pub token: String,
+}
+
+pub async fn list_tokens() -> Result<Vec<ApiToken>, String> {
+    let resp = Request::get("/api/tokens")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        resp.json().await.map_err(|e| e.to_string())
+    } else {
+        Err(error_message(resp).await)
+    }
+}
+
+#[derive(Serialize)]
+struct TokenBody<'a> {
+    name: &'a str,
+}
+
+pub async fn create_token(name: &str) -> Result<NewApiToken, String> {
+    let resp = Request::post("/api/tokens")
+        .json(&TokenBody { name })
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        resp.json().await.map_err(|e| e.to_string())
+    } else {
+        Err(error_message(resp).await)
+    }
+}
+
+pub async fn revoke_token(id: Uuid) -> Result<(), String> {
+    let resp = Request::delete(&format!("/api/tokens/{id}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(error_message(resp).await)
+    }
+}

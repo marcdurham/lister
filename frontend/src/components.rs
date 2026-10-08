@@ -2836,6 +2836,159 @@ pub fn admin_page(props: &AdminPageProps) -> Html {
                     },
                 }
             }
+            <ApiTokens />
+        </div>
+    }
+}
+
+async fn refresh_api_tokens(
+    tokens: UseStateHandle<Option<Vec<admin::ApiToken>>>,
+    error: UseStateHandle<Option<String>>,
+) {
+    match admin::list_tokens().await {
+        Ok(list) => tokens.set(Some(list)),
+        Err(msg) => error.set(Some(msg)),
+    }
+}
+
+/// The admin's own read-only API tokens (for apps like the home-monitor dashboard to read a
+/// list via `GET /api/lists?path=...`): create one, copy it once, revoke old ones.
+#[function_component(ApiTokens)]
+fn api_tokens() -> Html {
+    let tokens = use_state(|| None::<Vec<admin::ApiToken>>);
+    let error = use_state(|| None::<String>);
+    let created = use_state(|| None::<admin::NewApiToken>);
+    let name_ref = use_node_ref();
+
+    {
+        let tokens = tokens.clone();
+        let error = error.clone();
+        use_effect_with((), move |_| {
+            spawn_local(refresh_api_tokens(tokens, error));
+            || ()
+        });
+    }
+
+    let create = {
+        let tokens = tokens.clone();
+        let error = error.clone();
+        let created = created.clone();
+        let name_ref = name_ref.clone();
+        Callback::from(move |e: SubmitEvent| {
+            e.prevent_default();
+            let input = name_ref.cast::<HtmlInputElement>();
+            let name = input.as_ref().map(|i| i.value()).unwrap_or_default();
+            let tokens = tokens.clone();
+            let error = error.clone();
+            let created = created.clone();
+            spawn_local(async move {
+                error.set(None);
+                match admin::create_token(name.trim()).await {
+                    Ok(t) => {
+                        if let Some(i) = input {
+                            i.set_value("");
+                        }
+                        created.set(Some(t));
+                        refresh_api_tokens(tokens, error).await;
+                    }
+                    Err(msg) => error.set(Some(msg)),
+                }
+            });
+        })
+    };
+
+    let copy = {
+        let created = created.clone();
+        Callback::from(move |_: MouseEvent| {
+            if let (Some(t), Some(w)) = (&*created, web_sys::window()) {
+                let _ = w.navigator().clipboard().write_text(&t.token);
+            }
+        })
+    };
+    let dismiss = {
+        let created = created.clone();
+        Callback::from(move |_: MouseEvent| created.set(None))
+    };
+
+    html! {
+        <div class="api-tokens">
+            <h3>{ "API tokens" }</h3>
+            <p class="api-tokens-help">
+                { "Read-only tokens for other apps (like the home-monitor dashboard) to read your lists with " }
+                <code>{ "GET /api/lists?path=List/Sublist" }</code>
+                { " and the header " }<code>{ "Authorization: Bearer <token>" }</code>{ ". They can't change anything." }
+            </p>
+            if let Some(msg) = &*error {
+                <p class="auth-error">{ msg }</p>
+            }
+            if let Some(t) = &*created {
+                <div class="api-token-new">
+                    <div>{ format!("New token \"{}\" - copy it now, it won't be shown again:", t.name) }</div>
+                    <code class="api-token-value">{ &t.token }</code>
+                    <div class="admin-user-actions">
+                        <button onclick={copy}>{ "Copy" }</button>
+                        <button onclick={dismiss}>{ "Done" }</button>
+                    </div>
+                </div>
+            }
+            <form class="api-token-form" onsubmit={create}>
+                <input ref={name_ref} type="text" placeholder="Token name, e.g. home-monitor" maxlength="60" />
+                <button type="submit">{ "Create token" }</button>
+            </form>
+            {
+                match &*tokens {
+                    None => html! { <p class="empty">{ "Loading..." }</p> },
+                    Some(list) if list.is_empty() => html! { <p class="empty">{ "No tokens yet." }</p> },
+                    Some(list) => html! {
+                        <ul class="admin-user-list">
+                            { for list.iter().map(|t| {
+                                let revoke = {
+                                    let id = t.id;
+                                    let name = t.name.clone();
+                                    let tokens = tokens.clone();
+                                    let error = error.clone();
+                                    Callback::from(move |_: MouseEvent| {
+                                        let confirmed = web_sys::window()
+                                            .and_then(|w| w.confirm_with_message(&format!(
+                                                "Revoke the token \"{name}\"? Apps using it will stop working."
+                                            )).ok())
+                                            .unwrap_or(false);
+                                        if !confirmed {
+                                            return;
+                                        }
+                                        let tokens = tokens.clone();
+                                        let error = error.clone();
+                                        spawn_local(async move {
+                                            error.set(None);
+                                            if let Err(msg) = admin::revoke_token(id).await {
+                                                error.set(Some(msg));
+                                            } else {
+                                                refresh_api_tokens(tokens, error).await;
+                                            }
+                                        });
+                                    })
+                                };
+                                let used = t.last_used_at.map_or("never used".to_string(), |d| {
+                                    format!("last used {}", d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"))
+                                });
+                                html! {
+                                    <li class="admin-user-row" key={t.id.to_string()}>
+                                        <div class="admin-user-info">
+                                            <span class="admin-user-email">{ &t.name }</span>
+                                            <span class="admin-user-you">
+                                                { format!("created {} · {used}", t.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d")) }
+                                            </span>
+                                        </div>
+                                        <div class="admin-user-actions">
+                                            <button class="remove" onclick={revoke}>{ "Revoke" }</button>
+                                        </div>
+                                    </li>
+                                }
+                            }) }
+                        </ul>
+                    },
+                }
+            }
         </div>
     }
 }

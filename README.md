@@ -65,6 +65,7 @@ This builds the frontend release bundle and starts the backend on port 8400. The
 ## Read-only API
 
 `GET /api/lists?path=Home/Groceries` returns the items of the list at that path (list names from a
-top-level list down, case-insensitive) with `Authorization: Bearer <token>`. Mint a token with
-`cd backend && cargo run -- mint-token you@example.com "home-monitor"` (or `POST /api/tokens`
-while logged in). Tokens only open this read endpoint, never sync.
+top-level list down, case-insensitive) with `Authorization: Bearer <token>`. Create a token under
+**Admin → API tokens** (shown once, with a Copy button; revoke it there too), or on the server with
+`cd backend && cargo run -- mint-token you@example.com "home-monitor"`. Tokens only open this read
+endpoint, never sync.

@@ -272,3 +272,8 @@
   Tokens are minted with `POST /api/tokens` (logged in; also `GET`/`DELETE /api/tokens`) or
   `backend mint-token <email> [name]` on the server; only their SHA-256 is stored
   (migration 0008). Used by the home-monitor "Lister list" tile.
+
+## 2026-10-08 15:29 PDT
+- The Admin page has an "API tokens" section: create a named read-only token (shown once,
+  with a Copy button), see when each was created and last used, and revoke it. No more need
+  for `backend mint-token` on the server (it still works).

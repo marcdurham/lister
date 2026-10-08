@@ -1261,6 +1261,45 @@ header {
     color: #c92a2a;
 }
 
+.api-tokens {
+    margin-top: 1.5rem;
+}
+
+.api-tokens-help {
+    font-size: 0.85rem;
+    color: #616e7c;
+}
+
+.api-token-form {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.5rem 0 0.8rem;
+}
+
+.api-token-form input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #cbd2d9;
+    border-radius: 4px;
+}
+
+.api-token-new {
+    background: #fff9db;
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.api-token-value {
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+    user-select: all;
+}
+
 @media (max-width: 600px) {
     .app {
         padding-bottom: 6rem;
@@ -1457,6 +1496,17 @@ header {
     .admin-user-actions button {
         background: #3e4c59;
         color: #cbd2d9;
+    }
+    .api-tokens-help {
+        color: #9aa5b1;
+    }
+    .api-token-new {
+        background: #3d3a1e;
+    }
+    .api-token-form input {
+        background: #323f4b;
+        border-color: #52606d;
+        color: #f5f6f8;
     }
 }
 
