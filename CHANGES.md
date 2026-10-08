@@ -277,3 +277,9 @@
 - The Admin page has an "API tokens" section: create a named read-only token (shown once,
   with a Copy button), see when each was created and last used, and revoke it. No more need
   for `backend mint-token` on the server (it still works).
+
+## 2026-10-08 16:30 PDT
+- Deep links: opening the app with `#list=<list id>` shows that list, and
+  `#item=<list id>,<item id>` opens that item's editor on top of its list (back closes it).
+  Applied as soon as the list is in the local store, so it also works on a fresh browser
+  after the first sync. Used by the home-monitor "Lister list" tile.

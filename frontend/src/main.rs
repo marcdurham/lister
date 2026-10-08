@@ -39,6 +39,17 @@ struct Route {
     editing: Option<(Uuid, Uuid)>,
 }
 
+/// The `(list, item)` ids in the page's `#list=<id>` / `#item=<list>,<item>` hash, if any.
+fn parse_deep_link() -> Option<(Uuid, Option<Uuid>)> {
+    let hash = web_sys::window()?.location().hash().ok()?;
+    let hash = hash.trim_start_matches('#');
+    if let Some(l) = hash.strip_prefix("list=") {
+        return Some((l.parse().ok()?, None));
+    }
+    let (l, i) = hash.strip_prefix("item=")?.split_once(',')?;
+    Some((l.parse().ok()?, Some(i.parse().ok()?)))
+}
+
 /// Encode a route into the value stored in `history.state`.
 fn route_to_js(route: &Route) -> JsValue {
     JsValue::from_str(&serde_json::to_string(route).unwrap_or_default())
@@ -232,6 +243,38 @@ fn app() -> Html {
                 }
             });
             move || drop(listener)
+        });
+    }
+
+    // Deep links from other apps: `#list=<list id>` opens that list, `#item=<list id>,<item id>`
+    // opens the item's editor on top of its list. Applied once the list is in the local store
+    // (it may only arrive with the first sync), then the hash is dropped.
+    let pending_link = use_state(parse_deep_link);
+    {
+        let pending_link = pending_link.clone();
+        let path = path.clone();
+        let editing = editing.clone();
+        let state = state.clone();
+        use_effect_with((state.items.len(), state.memberships.len(), pending_link.is_some()), move |_| {
+            if let Some((list_id, item_id)) = *pending_link {
+                if let Some(list_path) = state.path_to(list_id) {
+                    let edit = item_id.and_then(|i| state.membership_in(i, list_id).map(|m| (i, m)));
+                    if let Some(window) = web_sys::window() {
+                        if let Ok(history) = window.history() {
+                            let list_route = Route { path: list_path.clone(), editing: None };
+                            let _ = history.replace_state_with_url(&route_to_js(&list_route), "", Some(&window.location().pathname().unwrap_or_default()));
+                            if let Some(ids) = edit {
+                                let route = Route { path: list_path.clone(), editing: Some(ids) };
+                                let _ = history.push_state_with_url(&route_to_js(&route), "", None);
+                            }
+                        }
+                    }
+                    path.set(list_path);
+                    editing.set(edit);
+                    pending_link.set(None);
+                }
+            }
+            || ()
         });
     }
 

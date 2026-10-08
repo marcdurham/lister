@@ -134,6 +134,35 @@ impl AppState {
         rows
     }
 
+    /// The view path (top-level list first) that leads to list `list_id`, following live
+    /// memberships upward; `None` while the list isn't in the local store.
+    pub fn path_to(&self, list_id: Uuid) -> Option<Vec<Uuid>> {
+        let mut path = vec![list_id];
+        let mut cur = list_id;
+        if !self.items.contains_key(&cur) {
+            return None;
+        }
+        while let Some(m) = self.memberships.values().filter(|m| m.item_id == cur && m.deleted_at.is_none()).min_by_key(|m| m.parent_id.is_some()) {
+            match m.parent_id {
+                Some(p) if !path.contains(&p) => {
+                    path.push(p);
+                    cur = p;
+                }
+                _ => break,
+            }
+        }
+        path.reverse();
+        Some(path)
+    }
+
+    /// The live membership of `item_id` directly in `list_id`.
+    pub fn membership_in(&self, item_id: Uuid, list_id: Uuid) -> Option<Uuid> {
+        self.memberships
+            .values()
+            .find(|m| m.item_id == item_id && m.parent_id == Some(list_id) && m.deleted_at.is_none())
+            .map(|m| m.id)
+    }
+
     /// Any live membership id for this item - used to open the item editor for an item
     /// reached by its id alone (e.g. the current list's own title), where a specific
     /// membership isn't already in hand.
