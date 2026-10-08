@@ -259,3 +259,9 @@
   "the server couldn't be reached": not signed in, request too large (413), the server's
   own error text (e.g. a database error), an unreadable response, or a real network
   failure. Per-item push/sync errors include the server's error text too.
+
+## 2026-10-08 14:27 PDT
+- Raised the backend's JSON body limit from Actix's 2 MB default to 20 MB, so a large
+  sync push (e.g. the first push after a big import) isn't rejected. The reverse proxy's
+  `client_max_body_size` for lister.xf2.us needs to be at least as large (nginx's
+  default is 1 MB).

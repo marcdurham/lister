@@ -8,6 +8,10 @@ use actix_files::{Files, NamedFile};
 use actix_web::{get, web, App, HttpServer, Responder};
 use std::path::PathBuf;
 
+/// Largest JSON body accepted (e.g. a big first push after an import). Keep the reverse
+/// proxy's `client_max_body_size` at least this large.
+const MAX_JSON_BYTES: usize = 20 * 1024 * 1024;
+
 fn dist_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist")
 }
@@ -38,6 +42,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(google_cache.clone())
+            .app_data(web::JsonConfig::default().limit(MAX_JSON_BYTES))
             .service(health)
             .service(api::sync)
             .service(auth::register)
