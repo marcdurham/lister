@@ -242,3 +242,14 @@
   so the browser scrolls natively with momentum; the touch hold-to-drag still works,
   with a non-passive `touchmove` listener on each draggable row cancelling the native
   scroll only once a drag has armed.
+
+## 2026-10-08 09:14 PDT
+- Fixed sync failing every time ("Sync failed - the server couldn't be reached") after
+  moving an item into a list it was already in. Moving rewrote the membership's parent,
+  leaving two live memberships for the same (item, list) pair, which the server's
+  `uq_membership_item_parent` index rejected - failing the whole sync with a 500.
+  - Move into a list / move to root now just removes the moved membership when the item
+    is already in the target list.
+  - The server now stores such a duplicate membership as deleted instead of erroring,
+    and the client pulls that back and drops its local duplicate, so clients already
+    stuck this way recover on their next sync.

@@ -89,6 +89,27 @@ async fn upsert_membership(pool: &PgPool, membership: &Membership, owner_id: Uui
         return Ok(());
     }
 
+    // A live membership for an (item, parent) pair that already has a different live row
+    // would violate uq_membership_item_parent and fail the whole sync. The item is already
+    // in that list, so store this one as deleted instead - the client pulls it back and
+    // drops its local duplicate.
+    let mut membership = membership.clone();
+    if membership.deleted_at.is_none() {
+        let duplicate = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM memberships
+                            WHERE item_id = $1 AND parent_id IS NOT DISTINCT FROM $2
+                              AND deleted_at IS NULL AND id <> $3)",
+        )
+        .bind(membership.item_id)
+        .bind(membership.parent_id)
+        .bind(membership.id)
+        .fetch_one(pool)
+        .await?;
+        if duplicate {
+            membership.deleted_at = Some(membership.updated_at);
+        }
+    }
+
     sqlx::query!(
         r#"
         INSERT INTO memberships (id, item_id, parent_id, position, visible, created_at, updated_at, deleted_at)
@@ -528,6 +549,47 @@ mod tests {
         assert!(!body.items.is_empty(), "should return at least one item");
         assert!(body.cursor > chrono::DateTime::UNIX_EPOCH,
             "cursor should be a real timestamp, not epoch zero");
+    }
+
+    #[tokio::test]
+    async fn duplicate_live_membership_is_stored_deleted() {
+        let pool = test_pool().await;
+        let owner = seed_owner(&pool).await;
+        let list = seed_item(&pool, owner, "list").await;
+        let item = seed_item(&pool, owner, "in two lists").await;
+
+        // The item is in both the root list and `list`.
+        let at_root = Membership::new(item.id, None, 0.0);
+        let in_list = Membership::new(item.id, Some(list.id), 0.0);
+        upsert_membership(&pool, &at_root, owner).await.unwrap();
+        upsert_membership(&pool, &in_list, owner).await.unwrap();
+
+        // A client then moves the root membership into `list`, duplicating `in_list`.
+        let moved = Membership {
+            parent_id: Some(list.id),
+            updated_at: at_root.updated_at + chrono::Duration::seconds(1),
+            ..at_root.clone()
+        };
+        upsert_membership(&pool, &moved, owner)
+            .await
+            .expect("a duplicate membership must not fail the sync");
+
+        let deleted: Option<Option<DateTime<Utc>>> =
+            sqlx::query_scalar("SELECT deleted_at FROM memberships WHERE id = $1")
+                .bind(at_root.id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(matches!(deleted, Some(Some(_))), "the duplicate should be stored deleted");
+
+        let live: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM memberships WHERE item_id = $1 AND deleted_at IS NULL",
+        )
+        .bind(item.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, 1, "only the original membership in `list` stays live");
     }
 
     #[tokio::test]

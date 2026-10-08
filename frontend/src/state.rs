@@ -39,6 +39,14 @@ impl AppState {
         }
     }
 
+    /// Whether `item_id` already appears (not deleted) in `parent`'s list - the server allows
+    /// only one live membership per (item, parent) pair.
+    pub fn has_live_membership(&self, item_id: Uuid, parent: Option<Uuid>) -> bool {
+        self.memberships
+            .values()
+            .any(|m| m.item_id == item_id && m.parent_id == parent && m.deleted_at.is_none())
+    }
+
     /// Children of `parent` (or top-level lists when `parent` is None), sorted by position.
     /// `include_hidden` bypasses both a membership's own `visible` flag and an item's
     /// due-based show/hide window (the same "Show hidden items" toggle covers both).
@@ -633,9 +641,16 @@ impl AppState {
                     .last()
                     .map(|(_, m)| m.position + 1.0)
                     .unwrap_or(1.0);
+                // If the item is already in the target list, moving it there just means
+                // leaving the old list - rewriting this row would duplicate the other one.
+                let already_there = self.has_live_membership(dragged_item_id, Some(target_item_id));
                 if let Some(m) = next.memberships.get_mut(&membership_id) {
-                    m.parent_id = Some(target_item_id);
-                    m.position = next_pos;
+                    if already_there {
+                        m.deleted_at = Some(Utc::now());
+                    } else {
+                        m.parent_id = Some(target_item_id);
+                        m.position = next_pos;
+                    }
                     m.updated_at = Utc::now();
                     store::put_membership(m.clone());
                 }
@@ -657,20 +672,24 @@ impl AppState {
                     .last()
                     .map(|(_, m)| m.position + 1.0)
                     .unwrap_or(1.0);
+                let already_there = self
+                    .memberships
+                    .get(&membership_id)
+                    .is_some_and(|m| m.parent_id.is_some() && self.has_live_membership(m.item_id, None));
                 if let Some(m) = next.memberships.get_mut(&membership_id) {
-                    m.parent_id = None;
-                    m.position = next_pos;
+                    if already_there {
+                        m.deleted_at = Some(Utc::now());
+                    } else {
+                        m.parent_id = None;
+                        m.position = next_pos;
+                    }
                     m.updated_at = Utc::now();
                     store::put_membership(m.clone());
                 }
                 Rc::new(next)
             }
             Action::AddToList { item_id, parent } => {
-                let already_there = self
-                    .memberships
-                    .values()
-                    .any(|m| m.item_id == item_id && m.parent_id == parent && m.deleted_at.is_none());
-                if already_there {
+                if self.has_live_membership(item_id, parent) {
                     return self;
                 }
                 let next_pos = self
