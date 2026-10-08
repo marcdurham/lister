@@ -61,3 +61,10 @@ sqlx migrate run
 ```
 
 This builds the frontend release bundle and starts the backend on port 8400. Then open http://127.0.0.1:8400. The app is installable as a PWA; the static shell works offline via the service worker, and list data works offline via the local store + background sync described above.
+
+## Read-only API
+
+`GET /api/lists?path=Home/Groceries` returns the items of the list at that path (list names from a
+top-level list down, case-insensitive) with `Authorization: Bearer <token>`. Mint a token with
+`cd backend && cargo run -- mint-token you@example.com "home-monitor"` (or `POST /api/tokens`
+while logged in). Tokens only open this read endpoint, never sync.

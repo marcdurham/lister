@@ -265,3 +265,10 @@
   sync push (e.g. the first push after a big import) isn't rejected. The reverse proxy's
   `client_max_body_size` for lister.xf2.us needs to be at least as large (nginx's
   default is 1 MB).
+
+## 2026-10-08 15:19 PDT
+- Added read-only API tokens and `GET /api/lists?path=Parent/Child` (bearer token or session
+  cookie), which returns the items of one list in order, minus deleted/hidden/time-gated ones.
+  Tokens are minted with `POST /api/tokens` (logged in; also `GET`/`DELETE /api/tokens`) or
+  `backend mint-token <email> [name]` on the server; only their SHA-256 is stored
+  (migration 0008). Used by the home-monitor "Lister list" tile.

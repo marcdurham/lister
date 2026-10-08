@@ -3,6 +3,7 @@ mod api;
 mod auth;
 mod db;
 mod google;
+mod tokens;
 
 use actix_files::{Files, NamedFile};
 use actix_web::{get, web, App, HttpServer, Responder};
@@ -34,6 +35,15 @@ async fn main() -> std::io::Result<()> {
     println!("Lister backend listening on http://{bind_addr}");
 
     let pool = db::connect().await;
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mint-token") {
+        let Some(email) = args.get(2) else {
+            eprintln!("usage: backend mint-token <email> [name]");
+            std::process::exit(2);
+        };
+        tokens::mint_cli(&pool, email, args.get(3).map_or("API token", String::as_str)).await;
+        return Ok(());
+    }
     auth::seed_default_admins(&pool).await;
 
     let google_cache = web::Data::new(google::GoogleImportCache::default());
@@ -53,6 +63,10 @@ async fn main() -> std::io::Result<()> {
             .service(admin::set_status)
             .service(admin::set_admin)
             .service(admin::delete_user)
+            .service(tokens::create)
+            .service(tokens::list)
+            .service(tokens::revoke)
+            .service(tokens::get_list)
             .service(google::connect)
             .service(google::callback)
             .service(google::imported_tasks)
