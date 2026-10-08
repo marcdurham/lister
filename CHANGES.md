@@ -253,3 +253,9 @@
   - The server now stores such a duplicate membership as deleted instead of erroring,
     and the client pulls that back and drops its local duplicate, so clients already
     stuck this way recover on their next sync.
+
+## 2026-10-08 14:17 PDT
+- The Sync button's error now shows what actually went wrong instead of always saying
+  "the server couldn't be reached": not signed in, request too large (413), the server's
+  own error text (e.g. a database error), an unreadable response, or a real network
+  failure. Per-item push/sync errors include the server's error text too.

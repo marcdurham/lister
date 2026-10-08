@@ -131,7 +131,7 @@ fn app() -> Html {
             show_login.set(false);
             let state = state.clone();
             spawn_local(async move {
-                sync::sync_once().await;
+                let _ = sync::sync_once().await;
                 state.dispatch(Action::Reload);
             });
         })
@@ -649,7 +649,7 @@ async fn sync_loop(state: UseReducerHandle<AppState>) {
     loop {
         if sync::is_online() {
             state.dispatch(Action::SetSyncing(true));
-            sync::sync_once().await;
+            let _ = sync::sync_once().await;
             state.dispatch(Action::SetSyncing(false));
             state.dispatch(Action::Reload);
         }

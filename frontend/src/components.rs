@@ -3170,8 +3170,8 @@ pub fn remote_bar(props: &RemoteBarProps) -> Html {
             let error = error.clone();
             let state = state.clone();
             spawn_local(async move {
-                if !sync::sync_once().await {
-                    error.set(Some("Sync failed - the server couldn't be reached.".to_string()));
+                if let Err(message) = sync::sync_once().await {
+                    error.set(Some(format!("Sync failed - {message}")));
                 }
                 state.dispatch(Action::Reload);
                 busy.set(false);

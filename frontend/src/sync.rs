@@ -9,9 +9,30 @@ pub fn is_online() -> bool {
         .unwrap_or(true)
 }
 
+/// A user-facing message for a non-2xx sync response, including the server's own error
+/// text when it sent plain text (proxy error pages are HTML, so those get a hint instead).
+async fn server_error(response: gloo_net::http::Response) -> String {
+    let status = response.status();
+    if status == 401 {
+        return "Sign in to sync with the server.".to_string();
+    }
+    if status == 413 {
+        return "The server rejected the sync as too large (413).".to_string();
+    }
+    let body = response.text().await.unwrap_or_default();
+    let body = body.trim();
+    if body.is_empty() || body.starts_with('<') {
+        format!("The server returned an error ({status}).")
+    } else {
+        let detail: String = body.chars().take(300).collect();
+        format!("The server returned an error ({status}): {detail}")
+    }
+}
+
 /// Push locally dirty rows and pull whatever changed server-side since our last cursor.
-/// Errors are swallowed - the caller just retries on the next tick.
-pub async fn sync_once() -> bool {
+/// The background loop ignores the error and retries on the next tick; the Sync button
+/// shows it.
+pub async fn sync_once() -> Result<(), String> {
     let items = store::dirty_items();
     let memberships = store::dirty_memberships();
     let since = store::get_cursor();
@@ -25,26 +46,25 @@ pub async fn sync_once() -> bool {
         memberships,
     };
 
-    let response = match Request::post("/api/sync").json(&request) {
-        Ok(builder) => builder.send().await,
-        Err(_) => return false,
-    };
-
-    let response = match response {
-        Ok(resp) if resp.ok() => resp,
-        _ => return false,
-    };
-
-    let body: shared::SyncResponse = match response.json().await {
-        Ok(body) => body,
-        Err(_) => return false,
-    };
+    let response = Request::post("/api/sync")
+        .json(&request)
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|_| "Couldn't reach the server.".to_string())?;
+    if !response.ok() {
+        return Err(server_error(response).await);
+    }
+    let body: shared::SyncResponse = response
+        .json()
+        .await
+        .map_err(|_| "The server sent an unreadable response.".to_string())?;
 
     store::mark_synced(&item_ids, &membership_ids);
     store::apply_pulled(body.items, body.memberships);
     store::set_cursor(body.cursor);
     store::set_last_sync(chrono::Utc::now());
-    true
+    Ok(())
 }
 
 /// What a per-item push/sync ended up doing.
@@ -91,11 +111,8 @@ pub async fn sync_item(item_id: Uuid, pull: bool) -> Result<ItemSyncOutcome, Str
         .send()
         .await
         .map_err(|_| "Couldn't reach the server.".to_string())?;
-    if response.status() == 401 {
-        return Err("Sign in to sync with the server.".to_string());
-    }
     if !response.ok() {
-        return Err(format!("The server returned an error ({}).", response.status()));
+        return Err(server_error(response).await);
     }
     let body: shared::SyncResponse = response
         .json()
