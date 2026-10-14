@@ -283,3 +283,6 @@
   `#item=<list id>,<item id>` opens that item's editor on top of its list (back closes it).
   Applied as soon as the list is in the local store, so it also works on a fresh browser
   after the first sync. Used by the home-monitor "Lister list" tile.
+
+## 2026-10-14
+- List item rows now follow the light/dark/system theme instead of always being black: white rows with dark text in light mode, black rows in dark mode.

@@ -525,8 +525,8 @@ header {
 .item {
     /* Anchors the absolutely positioned .nest-target shown while dragging. */
     position: relative;
-    background: #000;
-    color: #f5f6f8;
+    background: #fff;
+    color: #1f2933;
     padding: 0.6rem 0.8rem;
     user-select: none;
     -webkit-user-select: none;
@@ -536,7 +536,7 @@ header {
    (rather than a border) so the row keeps its exact size, inset so it isn't painted over
    by the neighbouring rows. */
 .item.nest-hover {
-    outline: 2px solid #fff;
+    outline: 2px solid #1f2933;
     outline-offset: -2px;
 }
 
@@ -625,7 +625,7 @@ header {
 .nest-hover-icon {
     display: flex;
     flex-shrink: 0;
-    color: #fff;
+    color: #1f2933;
     width: 16px;
     height: 16px;
 }
@@ -1339,6 +1339,16 @@ header {
 }
 
 :root[data-theme="dark"] {
+    .item {
+        background: #000;
+        color: #f5f6f8;
+    }
+    .item.nest-hover {
+        outline-color: #fff;
+    }
+    .nest-hover-icon {
+        color: #fff;
+    }
     .remote-bar {
         background: #2c3947;
         border-color: #52606d;
