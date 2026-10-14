@@ -286,3 +286,14 @@
 
 ## 2026-10-14
 - List item rows now follow the light/dark/system theme instead of always being black: white rows with dark text in light mode, black rows in dark mode.
+
+## 2026-10-14 00:45 PDT
+- Added `mockups/item-styles.html`: 14 side-by-side mockups of alternative list item row
+  styles (dividers, gapped cards, zebra, type accent bars/tints, icon tiles, inset grouped,
+  elevated, outlined, notebook, folder hierarchy, timeline, banded tray) with a light/dark
+  toggle, to pick a look that keeps rows from blending together.
+
+## 2026-10-14 00:55 PDT
+- List item rows now have a 1px hairline divider between them (mockup #2) and rounded
+  outer corners on the list, so adjacent rows no longer blend together. Works in both
+  light and dark themes.

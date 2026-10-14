@@ -532,6 +532,23 @@ header {
     -webkit-user-select: none;
 }
 
+/* Hairline between adjacent rows so they don't run together into one block, and rounded
+   outer corners on the first and last row (not overflow: hidden on the list, which would
+   clip the dragged row's outline). */
+.items > .item + .item {
+    border-top: 1px solid #e4e7eb;
+}
+
+.items > .item:first-child {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+.items > .item:not(:has(~ .item)) {
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
 /* The row the dragged item would be nested inside if released right now. An outline
    (rather than a border) so the row keeps its exact size, inset so it isn't painted over
    by the neighbouring rows. */
@@ -1342,6 +1359,9 @@ header {
     .item {
         background: #000;
         color: #f5f6f8;
+    }
+    .items > .item + .item {
+        border-top-color: #323f4b;
     }
     .item.nest-hover {
         outline-color: #fff;

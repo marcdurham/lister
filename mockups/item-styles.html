@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lister Item Styles</title>
+<style>
+:root {
+    color-scheme: light;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --page: #f5f6f8;
+    --frame: #f5f6f8;
+    --row: #fff;
+    --text: #1f2933;
+    --muted: #9aa5b1;
+    --soft: #616e7c;
+    --line: #e4e7eb;
+    --chip: #e4e7eb;
+    --note: #7048e8;
+    --list: #1f6feb;
+    --link: #0c8599;
+    --task: #868e96;
+    --done: #2f9e44;
+    --note-tint: #f3f0ff;
+    --list-tint: #e7f0ff;
+    --link-tint: #e3fafc;
+    --task-tint: #fff;
+    --shadow: 0 1px 3px rgba(31, 41, 51, .12), 0 1px 2px rgba(31, 41, 51, .08);
+    --zebra: #f8f9fa;
+    --paper: #fffdf5;
+    --rule: #dbe4f0;
+    --margin-rule: #f2b8b5;
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #11171d;
+    --frame: #1f2933;
+    --row: #000;
+    --text: #f5f6f8;
+    --muted: #7b8794;
+    --soft: #9aa5b1;
+    --line: #323f4b;
+    --chip: #3e4c59;
+    --note: #9775fa;
+    --list: #4c8dff;
+    --link: #3bc9db;
+    --task: #adb5bd;
+    --done: #51cf66;
+    --note-tint: #1e1733;
+    --list-tint: #0f1d33;
+    --link-tint: #0b2226;
+    --task-tint: #141b22;
+    --shadow: 0 1px 3px rgba(0, 0, 0, .6);
+    --zebra: #161d24;
+    --paper: #1a1f24;
+    --rule: #2a3440;
+    --margin-rule: #5c2b2b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); }
+.top {
+    max-width: 1200px; margin: 0 auto; padding: 1.5rem 16px .5rem;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem;
+}
+.top h1 { margin: 0; font-size: 1.4rem; }
+.top p { margin: .25rem 0 0; color: var(--soft); font-size: .9rem; max-width: 60ch; }
+.toggle {
+    border: 1px solid var(--line); background: var(--row); color: var(--text);
+    padding: .45rem .9rem; border-radius: 999px; cursor: pointer; font: inherit; font-size: .85rem;
+}
+.grid {
+    max-width: 1200px; margin: 0 auto; padding: 1rem 16px 3rem;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.5rem;
+}
+.card h2 { margin: 0 0 .15rem; font-size: 1rem; }
+.card h2 span { color: var(--muted); font-weight: 500; margin-right: .3rem; }
+.card .why { margin: 0 0 .6rem; color: var(--soft); font-size: .8rem; line-height: 1.35; min-height: 2.2em; }
+.phone { background: var(--frame); border-radius: 14px; padding: 12px; border: 1px solid var(--line); }
+
+/* ---------- shared row skeleton (mirrors the real .item / .item-main) ---------- */
+.items { list-style: none; margin: 0; padding: 0; }
+.item { position: relative; background: var(--row); color: var(--text); padding: .6rem .8rem; }
+.item-main { display: flex; align-items: flex-start; gap: .5rem; }
+.item-main > .ico, .item-main > input { margin-top: .2em; flex-shrink: 0; }
+.ico { width: 16px; height: 16px; display: flex; }
+.ico.note { color: var(--note); } .ico.list { color: var(--list); } .ico.link { color: var(--link); }
+input[type="checkbox"] { width: 16px; height: 16px; margin: .2em 0 0; accent-color: var(--list); }
+.title-group { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.text { font-size: 1.2rem; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.preview { font-size: .75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item.done .text { text-decoration: line-through; color: var(--muted); }
+.count { font-size: .7rem; color: var(--soft); background: var(--chip); padding: .1rem .45rem; border-radius: 999px; margin-top: .35em; flex-shrink: 0; }
+.edit { color: var(--muted); width: 2.1rem; height: 2.1rem; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin: -.35rem -.4rem -.35rem 0; }
+.chev { display: none; }
+
+/* ---------- 1. current ---------- */
+/* (no extra rules: rows touch, same color, no separators) */
+
+/* ---------- 2. hairline dividers ---------- */
+.s-dividers .item + .item { border-top: 1px solid var(--line); }
+.s-dividers .items { border-radius: 8px; overflow: hidden; }
+
+/* ---------- 3. gapped cards ---------- */
+.s-cards .items { display: flex; flex-direction: column; gap: 6px; }
+.s-cards .item { border-radius: 10px; }
+
+/* ---------- 4. zebra ---------- */
+.s-zebra .item:nth-child(even) { background: var(--zebra); }
+.s-zebra .items { border-radius: 8px; overflow: hidden; }
+
+/* ---------- 5. type accent bar ---------- */
+.s-accent .items { display: flex; flex-direction: column; gap: 4px; }
+.s-accent .item { border-left: 4px solid var(--task); border-radius: 4px 8px 8px 4px; }
+.s-accent .item.k-note { border-left-color: var(--note); }
+.s-accent .item.k-list { border-left-color: var(--list); }
+.s-accent .item.k-link { border-left-color: var(--link); }
+.s-accent .item.done { border-left-color: var(--done); }
+
+/* ---------- 6. tinted by type ---------- */
+.s-tint .items { display: flex; flex-direction: column; gap: 4px; }
+.s-tint .item { border-radius: 8px; background: var(--task-tint); }
+.s-tint .item.k-note { background: var(--note-tint); }
+.s-tint .item.k-list { background: var(--list-tint); }
+.s-tint .item.k-link { background: var(--link-tint); }
+
+/* ---------- 7. icon tiles ---------- */
+.s-tiles .item + .item { border-top: 1px solid var(--line); }
+.s-tiles .items { border-radius: 10px; overflow: hidden; }
+.s-tiles .item-main { align-items: center; gap: .75rem; }
+.s-tiles .item-main > .ico, .s-tiles .item-main > input { margin-top: 0; }
+.s-tiles .ico { width: 32px; height: 32px; border-radius: 8px; align-items: center; justify-content: center; color: #fff; }
+.s-tiles .ico svg { width: 16px; height: 16px; }
+.s-tiles .ico.note { background: var(--note); } .s-tiles .ico.list { background: var(--list); } .s-tiles .ico.link { background: var(--link); }
+.s-tiles input[type="checkbox"] { width: 32px; height: 22px; }
+.s-tiles .count { margin-top: 0; }
+
+/* ---------- 8. inset grouped (iOS settings) ---------- */
+.s-inset .items { border-radius: 12px; overflow: hidden; }
+.s-inset .item { padding-left: 0; }
+.s-inset .item-main { padding-left: .9rem; }
+.s-inset .item + .item::before {
+    content: ""; position: absolute; top: 0; right: 0; left: 2.4rem; border-top: 1px solid var(--line);
+}
+.s-inset .chev { display: flex; color: var(--muted); margin-top: .35em; }
+.s-inset .item.k-list .edit { display: none; }
+.s-inset .item:not(.k-list) .chev { display: none; }
+
+/* ---------- 9. elevated ---------- */
+.s-shadow .items { display: flex; flex-direction: column; gap: 8px; }
+.s-shadow .item { border-radius: 10px; box-shadow: var(--shadow); }
+
+/* ---------- 10. outlined ---------- */
+.s-outline .items { display: flex; flex-direction: column; gap: 6px; }
+.s-outline .item { border: 1px solid var(--line); border-radius: 10px; background: transparent; }
+.s-outline .item.k-list { border-color: var(--list); }
+
+/* ---------- 11. ruled notebook ---------- */
+.s-paper .items { background: var(--paper); border-radius: 6px; overflow: hidden; position: relative; }
+.s-paper .items::before { content: ""; position: absolute; top: 0; bottom: 0; left: 2.1rem; border-left: 2px solid var(--margin-rule); }
+.s-paper .item { background: transparent; border-bottom: 1px solid var(--rule); padding-left: .6rem; }
+.s-paper .item-main { gap: 1.1rem; }
+.s-paper .text { font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; }
+
+/* ---------- 12. folder hierarchy (lists stand out, tasks recede) ---------- */
+.s-folders .items { display: flex; flex-direction: column; gap: 2px; }
+.s-folders .item { background: transparent; padding: .45rem .8rem; }
+.s-folders .item.k-list { background: var(--row); border-radius: 10px; padding: .75rem .8rem; margin: 4px 0; box-shadow: var(--shadow); }
+.s-folders .item.k-list .text { font-weight: 650; }
+.s-folders .item.k-list .edit { display: none; }
+.s-folders .item.k-list .chev { display: flex; color: var(--list); margin-top: .35em; }
+.s-folders .item:not(.k-list) .text { font-size: 1.05rem; }
+
+/* ---------- 13. timeline / connector ---------- */
+.s-timeline .items { position: relative; }
+.s-timeline .items::before { content: ""; position: absolute; top: 1.4rem; bottom: 1.4rem; left: 15px; border-left: 2px solid var(--line); }
+.s-timeline .item { background: transparent; padding: .25rem 0 .25rem 2.4rem; }
+.s-timeline .item-main { background: var(--row); border-radius: 10px; padding: .5rem .7rem; }
+.s-timeline .item-main > .ico, .s-timeline .item-main > input {
+    position: absolute; left: 6px; top: calc(.25rem + .75rem); margin: 0; z-index: 1;
+    width: 20px; height: 20px; border-radius: 999px; background: var(--frame);
+}
+.s-timeline .item-main > .ico { align-items: center; justify-content: center; box-shadow: 0 0 0 2px currentColor inset; }
+.s-timeline .item-main > input { outline: 3px solid var(--frame); }
+.s-timeline .ico svg { width: 11px; height: 11px; }
+
+/* (inset dividers are drawn by the ::before above; the line starts where the text does) */
+/* ---------- 14. bold contrast rows (alternating with thick gaps on page color) ---------- */
+.s-bands .items { display: flex; flex-direction: column; gap: 3px; background: var(--line); border-radius: 10px; overflow: hidden; padding: 3px; }
+.s-bands .item { border-radius: 7px; }
+.s-bands .item.done { background: transparent; }
+.s-bands .item.done .text { color: var(--soft); }
+</style>
+</head>
+<body>
+<div class="top">
+    <div>
+        <h1>Lister item style ideas</h1>
+        <p>Same sample list in every frame, sized like the real rows (1.2rem title, 0.6rem × 0.8rem padding). #1 is today's look for comparison. Toggle the theme to check both.</p>
+    </div>
+    <button class="toggle" id="theme">Switch to dark</button>
+</div>
+<div class="grid" id="grid"></div>
+
+<script>
+const ICONS = {
+    note: '<svg viewBox="0 0 16 16" width="16" height="16"><rect x="2" y="1.5" width="12" height="13" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="4.5" y1="5" x2="11.5" y2="5" stroke="currentColor" stroke-width="1.1"/><line x1="4.5" y1="7.7" x2="11.5" y2="7.7" stroke="currentColor" stroke-width="1.1"/><line x1="4.5" y1="10.4" x2="9" y2="10.4" stroke="currentColor" stroke-width="1.1"/></svg>',
+    list: '<svg viewBox="0 0 16 16" width="16" height="16"><circle cx="2.2" cy="3.2" r="1" fill="currentColor"/><circle cx="2.2" cy="8" r="1" fill="currentColor"/><circle cx="2.2" cy="12.8" r="1" fill="currentColor"/><line x1="5" y1="3.2" x2="14" y2="3.2" stroke="currentColor" stroke-width="1.3"/><line x1="5" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.3"/><line x1="5" y1="12.8" x2="14" y2="12.8" stroke="currentColor" stroke-width="1.3"/></svg>',
+    link: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.3-2.3a2.6 2.6 0 0 0-3.7-3.7l-1 1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.2 9.1a2.6 2.6 0 0 0 3.7 3.7l1-1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>',
+    edit: '<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="3" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="13" r="1.3" fill="currentColor"/></svg>',
+    chev: '<svg viewBox="0 0 16 16" width="16" height="16"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+const ITEMS = [
+    { kind: "list", text: "Groceries", count: 12 },
+    { kind: "task", text: "Call the dentist about Thursday" },
+    { kind: "note", text: "Packing ideas", preview: "Rain jacket, charger, the good socks…" },
+    { kind: "task", text: "Renew car registration", done: true },
+    { kind: "link", text: "Recipe: lemon orzo", preview: "cooking.example.com/lemon-orzo" },
+    { kind: "list", text: "Weekend projects", count: 4 },
+    { kind: "task", text: "Water the plants" },
+];
+
+const STYLES = [
+    ["current", "Current", "Today's rows: same color, no gaps or lines, so they read as one block."],
+    ["dividers", "Hairline dividers", "The smallest change: a 1px line between rows. Keeps the flat look."],
+    ["cards", "Gapped cards", "6px of page color between rounded rows. Each item is its own tile."],
+    ["zebra", "Zebra stripes", "Every other row slightly darker. Helps on long lists without adding lines."],
+    ["accent", "Type accent bar", "Left edge colored by type: purple note, blue list, teal link, green done."],
+    ["tint", "Tinted by type", "Pale background per type, so you can scan for lists or notes by color."],
+    ["tiles", "Icon tiles", "Icons sit in colored squares, like app icons. Strong left-side rhythm."],
+    ["inset", "Inset grouped", "iOS Settings style: one rounded group, dividers inset past the icon, chevrons on sub-lists."],
+    ["shadow", "Elevated cards", "Soft shadow and an 8px gap. Rows lift off the page."],
+    ["outline", "Outlined", "Transparent rows with a border. Sub-lists get a blue outline."],
+    ["paper", "Ruled notebook", "Ruled lines, a red margin line and a serif font. Adds character."],
+    ["folders", "Folder hierarchy", "Sub-lists become bold raised cards with a chevron; tasks sit lighter between them."],
+    ["timeline", "Timeline", "Icons strung on a vertical line, each row a floating pill beside it."],
+    ["bands", "Banded tray", "Rows sit in a darker tray with thin gutters; done items fade into the tray."],
+];
+
+function row(it) {
+    const icon = it.kind === "task"
+        ? `<input type="checkbox" ${it.done ? "checked" : ""} tabindex="-1">`
+        : `<span class="ico ${it.kind}">${ICONS[it.kind]}</span>`;
+    return `<li class="item k-${it.kind}${it.done ? " done" : ""}">
+        <div class="item-main">
+            ${icon}
+            <div class="title-group">
+                <span class="text">${it.text}</span>
+                ${it.preview ? `<span class="preview">${it.preview}</span>` : ""}
+            </div>
+            ${it.count ? `<span class="count">${it.count}</span>` : ""}
+            <span class="chev">${ICONS.chev}</span>
+            <span class="edit">${ICONS.edit}</span>
+        </div>
+    </li>`;
+}
+
+document.getElementById("grid").innerHTML = STYLES.map(([id, name, why], i) => `
+    <section class="card s-${id}">
+        <h2><span>${i + 1}.</span>${name}</h2>
+        <p class="why">${why}</p>
+        <div class="phone"><ul class="items">${ITEMS.map(row).join("")}</ul></div>
+    </section>`).join("");
+
+const btn = document.getElementById("theme");
+const root = document.documentElement;
+function setTheme(t) {
+    root.dataset.theme = t;
+    btn.textContent = t === "dark" ? "Switch to light" : "Switch to dark";
+}
+btn.onclick = () => setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) setTheme("dark");
+</script>
+</body>
+</html>
