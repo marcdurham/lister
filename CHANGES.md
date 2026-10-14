@@ -297,3 +297,14 @@
 - List item rows now have a 1px hairline divider between them (mockup #2) and rounded
   outer corners on the list, so adjacent rows no longer blend together. Works in both
   light and dark themes.
+
+## 2026-10-14 01:00 PDT
+- Added `mockups/light-themes.html`: five dimmer light-mode palettes (soft gray, warm
+  paper, slate mist, dim gray, sage) next to the current light theme, on a mock of the
+  list page.
+
+## 2026-10-14 01:10 PDT
+- Light theme is now "slate mist" (mockup #3): a dimmer blue-gray page (`#c9d2dc`) with
+  `#dfe5ec` rows and surfaces, darker slate chips/borders, and slightly darker secondary
+  text for contrast. The light-theme colors are now CSS variables on `:root`; the dark
+  theme sets them to their previous values, so dark mode is unchanged.
