@@ -308,3 +308,21 @@
   `#dfe5ec` rows and surfaces, darker slate chips/borders, and slightly darker secondary
   text for contrast. The light-theme colors are now CSS variables on `:root`; the dark
   theme sets them to their previous values, so dark mode is unchanged.
+
+## 2026-10-17 19:30 PDT
+- Importing a JSON file now opens a dialog asking whether to **Merge** or **Overwrite
+  everything**, and says how many of the file's items are new. Merge adds only the
+  items/memberships whose ids aren't already present (so re-importing your own export
+  adds nothing) and keeps everything else. Overwrite asks a second time before going
+  ahead. Replaces the old single native `confirm()` that always overwrote.
+- Overwrite now sticks on the server and other devices. Previously it only replaced the
+  browser's copy and reset the sync cursor, so the next pull brought the old rows back.
+  Now every current row not in the file is moved to the trash (items and their
+  memberships share one `deleted_at`, so restoring an item from the trash puts it back
+  where it was), imported rows are re-stamped with the current time so they win the
+  server's newer-`updated_at` check, and the sync cursor is kept.
+- `store::dirty_memberships` now returns deleted rows first, so a replacement membership
+  for the same (item, parent) isn't stored as a duplicate because it reached the server
+  before the row it replaces was trashed.
+- Added `backup::new_rows`, `store::add_all`, and `Action::MergeJson`; added a
+  `.editor-actions button.danger` style.

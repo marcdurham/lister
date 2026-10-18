@@ -3172,8 +3172,12 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
         })
     };
 
+    // A parsed JSON file waiting for the user to pick merge or overwrite. The `Option`
+    // inside lets whichever button wins take the data out without cloning it.
+    let pending_import = use_state(|| None::<Rc<RefCell<Option<backup::ExportData>>>>);
+
     let on_file_change = {
-        let state = props.state.clone();
+        let pending_import = pending_import.clone();
         Callback::from(move |e: Event| {
             let input: HtmlInputElement = e.target_unchecked_into();
             let Some(file) = input.files().and_then(|list| list.get(0)) else {
@@ -3181,7 +3185,7 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
             };
             input.set_value("");
 
-            let state = state.clone();
+            let pending_import = pending_import.clone();
             let Ok(reader) = FileReader::new() else {
                 return;
             };
@@ -3194,22 +3198,7 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                     return;
                 };
                 match backup::parse_import(&text) {
-                    Ok(data) => {
-                        let confirmed = web_sys::window()
-                            .and_then(|w| {
-                                w.confirm_with_message(
-                                    "Importing will replace all of your current tasks with the contents of this file. Continue?",
-                                )
-                                .ok()
-                            })
-                            .unwrap_or(false);
-                        if confirmed {
-                            state.dispatch(Action::ImportJson {
-                                items: data.items,
-                                memberships: data.memberships,
-                            });
-                        }
-                    }
+                    Ok(data) => pending_import.set(Some(Rc::new(RefCell::new(Some(data))))),
                     Err(_) => {
                         if let Some(window) = web_sys::window() {
                             let _ = window
@@ -3271,6 +3260,16 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                 onchange={on_file_change}
                 style="display: none;"
             />
+            if let Some(pending) = (*pending_import).clone() {
+                <JsonImportDialog
+                    state={props.state.clone()}
+                    {pending}
+                    on_close={{
+                        let pending_import = pending_import.clone();
+                        Callback::from(move |_| pending_import.set(None))
+                    }}
+                />
+            }
             <input
                 type="file"
                 accept=".md,text/markdown"
@@ -3278,6 +3277,142 @@ pub fn settings_menu(props: &SettingsMenuProps) -> Html {
                 onchange={on_markdown_file_change}
                 style="display: none;"
             />
+        </div>
+    }
+}
+
+#[derive(Properties)]
+pub struct JsonImportDialogProps {
+    pub state: UseReducerHandle<AppState>,
+    pub pending: Rc<RefCell<Option<backup::ExportData>>>,
+    pub on_close: Callback<()>,
+}
+
+impl PartialEq for JsonImportDialogProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state
+            && Rc::ptr_eq(&self.pending, &other.pending)
+            && self.on_close == other.on_close
+    }
+}
+
+/// Asks whether a JSON import should be merged in (adding only rows whose ids aren't
+/// already here) or replace everything, with a second "are you sure" step before
+/// overwriting.
+#[function_component(JsonImportDialog)]
+pub fn json_import_dialog(props: &JsonImportDialogProps) -> Html {
+    let confirming_overwrite = use_state(|| false);
+
+    let (total, new_count) = props
+        .pending
+        .borrow()
+        .as_ref()
+        .map(|data| {
+            let new_count = data
+                .items
+                .iter()
+                .filter(|i| !props.state.items.contains_key(&i.id))
+                .count();
+            (data.items.len(), new_count)
+        })
+        .unwrap_or((0, 0));
+    let current = props
+        .state
+        .items
+        .values()
+        .filter(|i| i.deleted_at.is_none())
+        .count();
+
+    let merge = {
+        let state = props.state.clone();
+        let pending = props.pending.clone();
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| {
+            if let Some(data) = pending.borrow_mut().take() {
+                let (items, memberships) =
+                    backup::new_rows(data, &state.items, &state.memberships);
+                if !items.is_empty() || !memberships.is_empty() {
+                    state.dispatch(Action::MergeJson { items, memberships });
+                }
+            }
+            on_close.emit(());
+        })
+    };
+    let ask_overwrite = {
+        let confirming_overwrite = confirming_overwrite.clone();
+        Callback::from(move |_: MouseEvent| confirming_overwrite.set(true))
+    };
+    let back = {
+        let confirming_overwrite = confirming_overwrite.clone();
+        Callback::from(move |_: MouseEvent| confirming_overwrite.set(false))
+    };
+    let overwrite = {
+        let state = props.state.clone();
+        let pending = props.pending.clone();
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| {
+            if let Some(data) = pending.borrow_mut().take() {
+                state.dispatch(Action::ImportJson {
+                    items: data.items,
+                    memberships: data.memberships,
+                });
+            }
+            on_close.emit(());
+        })
+    };
+    let cancel = {
+        let on_close = props.on_close.clone();
+        Callback::from(move |_: MouseEvent| on_close.emit(()))
+    };
+
+    let plural = |n: usize| if n == 1 { "item" } else { "items" };
+
+    html! {
+        <div class="editor-overlay">
+            <div class="editor json-import-dialog">
+                if *confirming_overwrite {
+                    <h2>{ "Overwrite everything?" }</h2>
+                    <p>
+                        { format!(
+                            "This replaces your {current} current {} with the {total} {} in this file, on every device. Anything not in the file goes to the trash.",
+                            plural(current),
+                            plural(total),
+                        ) }
+                    </p>
+                    <div class="editor-actions">
+                        <button class="danger" onclick={overwrite}>{ "Yes, overwrite everything" }</button>
+                        <button onclick={back}>{ "Back" }</button>
+                    </div>
+                } else {
+                    <h2>{ "Import tasks" }</h2>
+                    <p>
+                        { format!("This file has {total} {}. ", plural(total)) }
+                        if new_count == 0 && total == 1 {
+                            { "You already have it." }
+                        } else if new_count == 0 {
+                            { "You already have all of them." }
+                        } else if new_count == total {
+                            { "None of them are here yet." }
+                        } else {
+                            { format!(
+                                "{new_count} of them {} new; the rest are already here.",
+                                if new_count == 1 { "is" } else { "are" },
+                            ) }
+                        }
+                    </p>
+                    <p>
+                        <strong>{ "Merge" }</strong>
+                        { " adds the new items and keeps everything you already have. " }
+                        <strong>{ "Overwrite" }</strong>
+                        { " replaces everything you have now with the file's contents, moving anything not in the file to the trash." }
+                    </p>
+                    <div class="editor-actions">
+                        <button onclick={merge}>{ "Merge" }</button>
+                        <button class="danger" onclick={ask_overwrite}>{ "Overwrite everything…" }</button>
+                        <button onclick={cancel}>{ "Cancel" }</button>
+                    </div>
+                }
+            </div>
         </div>
     }
 }

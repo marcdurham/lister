@@ -1189,6 +1189,10 @@ header {
     cursor: pointer;
 }
 
+.json-import-dialog .editor-actions {
+    flex-wrap: wrap;
+}
+
 .editor-secondary-actions .remove {
     color: #c92a2a;
 }
@@ -1579,5 +1583,11 @@ header {
 /* Last, and as specific as the dark-theme button overrides, so it stays green in both themes. */
 :root .editor-actions button.done-btn {
     background: #2f9e44;
+    color: #fff;
+}
+
+/* Same trick for destructive confirm buttons (e.g. overwriting on JSON import). */
+:root .editor-actions button.danger {
+    background: #c92a2a;
     color: #fff;
 }

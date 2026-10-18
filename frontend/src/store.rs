@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use gloo_storage::{LocalStorage, Storage};
 use serde::{Deserialize, Serialize};
 use shared::{Item, Membership};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const ITEMS_KEY: &str = "lister.items";
@@ -153,12 +153,17 @@ pub fn dirty_items() -> Vec<Item> {
         .collect()
 }
 
+/// Deleted rows come first: the server stores a live membership as deleted when another
+/// live one exists for the same (item, parent), so a replacement (e.g. after a JSON
+/// overwrite) must arrive after the row it replaces has been trashed.
 pub fn dirty_memberships() -> Vec<Membership> {
-    load_memberships()
+    let mut memberships: Vec<Membership> = load_memberships()
         .into_values()
         .filter(|r| r.dirty)
         .map(|r| r.membership)
-        .collect()
+        .collect();
+    memberships.sort_by_key(|m| m.deleted_at.is_none());
+    memberships
 }
 
 /// Clear the dirty flag for rows that were just pushed successfully.
@@ -191,37 +196,86 @@ pub fn clear_all() {
     LocalStorage::delete(LAST_SYNC_KEY);
 }
 
-/// Wipe all locally cached rows and replace them with an imported set, marking every row
-/// dirty so the next sync push mirrors the import to the server.
-pub fn replace_all(items: Vec<Item>, memberships: Vec<Membership>) {
-    clear_all();
-    let items: HashMap<Uuid, ItemRecord> = items
-        .into_iter()
-        .map(|item| {
-            (
-                item.id,
-                ItemRecord {
-                    item,
-                    dirty: true,
-                    pushed_at: None,
-                },
-            )
-        })
-        .collect();
+/// Replace the live data with an imported set. Every current row that isn't in the
+/// import is trashed rather than dropped, and imported rows are re-stamped `now`, all
+/// marked dirty: the server keeps whichever copy has the newer `updated_at`, so this is
+/// what makes the overwrite stick server-side (and on other devices) instead of the next
+/// pull bringing the old rows back. Trashed items share one `deleted_at` with their
+/// memberships, so restoring one from the trash puts it back where it was.
+pub fn replace_all(new_items: Vec<Item>, new_memberships: Vec<Membership>) {
+    let now = Utc::now();
+
+    let mut items = load_items();
+    let imported: HashSet<Uuid> = new_items.iter().map(|i| i.id).collect();
+    for (id, record) in items.iter_mut() {
+        if !imported.contains(id) && record.item.deleted_at.is_none() {
+            record.item.deleted_at = Some(now);
+            record.item.updated_at = now;
+            record.dirty = true;
+        }
+    }
+    for mut item in new_items {
+        item.updated_at = now;
+        let pushed_at = items.get(&item.id).and_then(|r| r.pushed_at);
+        items.insert(
+            item.id,
+            ItemRecord {
+                item,
+                dirty: true,
+                pushed_at,
+            },
+        );
+    }
     save_items(&items);
 
-    let memberships: HashMap<Uuid, MembershipRecord> = memberships
-        .into_iter()
-        .map(|membership| {
-            (
-                membership.id,
-                MembershipRecord {
-                    membership,
-                    dirty: true,
-                },
-            )
-        })
-        .collect();
+    let mut memberships = load_memberships();
+    let imported: HashSet<Uuid> = new_memberships.iter().map(|m| m.id).collect();
+    for (id, record) in memberships.iter_mut() {
+        if !imported.contains(id) && record.membership.deleted_at.is_none() {
+            record.membership.deleted_at = Some(now);
+            record.membership.updated_at = now;
+            record.dirty = true;
+        }
+    }
+    for mut membership in new_memberships {
+        membership.updated_at = now;
+        memberships.insert(
+            membership.id,
+            MembershipRecord {
+                membership,
+                dirty: true,
+            },
+        );
+    }
+    save_memberships(&memberships);
+}
+
+/// Add imported rows alongside the existing ones, marking each dirty so the next sync
+/// push sends them to the server. Loads and saves once instead of once per row.
+pub fn add_all(new_items: Vec<Item>, new_memberships: Vec<Membership>) {
+    let mut items = load_items();
+    for item in new_items {
+        items.insert(
+            item.id,
+            ItemRecord {
+                item,
+                dirty: true,
+                pushed_at: None,
+            },
+        );
+    }
+    save_items(&items);
+
+    let mut memberships = load_memberships();
+    for membership in new_memberships {
+        memberships.insert(
+            membership.id,
+            MembershipRecord {
+                membership,
+                dirty: true,
+            },
+        );
+    }
     save_memberships(&memberships);
 }
 

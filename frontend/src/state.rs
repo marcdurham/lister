@@ -469,6 +469,12 @@ pub enum Action {
         items: Vec<Item>,
         memberships: Vec<Membership>,
     },
+    /// Adds a JSON import's rows next to the existing ones. The caller has already
+    /// dropped any whose ids exist locally (see `backup::new_rows`).
+    MergeJson {
+        items: Vec<Item>,
+        memberships: Vec<Membership>,
+    },
 }
 
 impl Reducible for AppState {
@@ -908,14 +914,20 @@ impl AppState {
                 Rc::new(next)
             }
             Action::ImportJson { items, memberships } => {
-                store::replace_all(items.clone(), memberships.clone());
+                store::replace_all(items, memberships);
                 Rc::new(AppState {
-                    items: items.into_iter().map(|i| (i.id, i)).collect(),
-                    memberships: memberships.into_iter().map(|m| (m.id, m)).collect(),
                     online: self.online,
                     syncing: self.syncing,
-                    sync_info: HashMap::new(),
+                    ..AppState::load()
                 })
+            }
+            Action::MergeJson { items, memberships } => {
+                store::add_all(items.clone(), memberships.clone());
+                let mut next = (*self).clone();
+                next.items.extend(items.into_iter().map(|i| (i.id, i)));
+                next.memberships
+                    .extend(memberships.into_iter().map(|m| (m.id, m)));
+                Rc::new(next)
             }
         }
     }
