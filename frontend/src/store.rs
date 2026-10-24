@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use gloo_storage::{LocalStorage, Storage};
 use serde::{Deserialize, Serialize};
 use shared::{Item, Membership};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -148,8 +149,67 @@ pub fn backfill_list_flags() {
     let _ = LocalStorage::set(LISTS_BACKFILLED_KEY, true);
 }
 
+/// An item being filled in by the editor before it's added (long-pressing the composer's
+/// Add button). It lives only in memory: `put_item`/`put_membership` update it here instead
+/// of writing it to local storage, so it's never synced, and `AppState::load` merges it in
+/// so the editor keeps finding it across reloads. `commit_draft` adds it for real;
+/// `discard_draft` throws it away.
+struct Draft {
+    item: Item,
+    memberships: HashMap<Uuid, Membership>,
+}
+
+thread_local! {
+    static DRAFT: RefCell<Option<Draft>> = const { RefCell::new(None) };
+}
+
+pub fn begin_draft(item: Item, membership: Membership) {
+    let memberships = HashMap::from([(membership.id, membership)]);
+    DRAFT.with(|d| *d.borrow_mut() = Some(Draft { item, memberships }));
+}
+
+pub fn is_draft(item_id: Uuid) -> bool {
+    DRAFT.with(|d| d.borrow().as_ref().is_some_and(|d| d.item.id == item_id))
+}
+
+pub fn has_draft() -> bool {
+    DRAFT.with(|d| d.borrow().is_some())
+}
+
+pub fn draft_rows() -> Option<(Item, Vec<Membership>)> {
+    DRAFT.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(|d| (d.item.clone(), d.memberships.values().cloned().collect()))
+    })
+}
+
+/// Writes the draft to local storage like any other new item.
+pub fn commit_draft() {
+    if let Some(draft) = DRAFT.with(|d| d.borrow_mut().take()) {
+        put_item(draft.item);
+        for membership in draft.memberships.into_values() {
+            put_membership(membership);
+        }
+    }
+}
+
+pub fn discard_draft() {
+    DRAFT.with(|d| *d.borrow_mut() = None);
+}
+
 /// Insert/update a single item locally, marking it dirty so the next sync push picks it up.
 pub fn put_item(item: Item) {
+    let item = match DRAFT.with(|d| match d.borrow_mut().as_mut() {
+        Some(draft) if draft.item.id == item.id => {
+            draft.item = item;
+            None
+        }
+        _ => Some(item),
+    }) {
+        Some(item) => item,
+        None => return,
+    };
     let mut items = load_items();
     let pushed_at = items.get(&item.id).and_then(|r| r.pushed_at);
     items.insert(
@@ -165,6 +225,16 @@ pub fn put_item(item: Item) {
 
 /// Insert/update a single membership locally, marking it dirty.
 pub fn put_membership(membership: Membership) {
+    let membership = match DRAFT.with(|d| match d.borrow_mut().as_mut() {
+        Some(draft) if draft.item.id == membership.item_id => {
+            draft.memberships.insert(membership.id, membership);
+            None
+        }
+        _ => Some(membership),
+    }) {
+        Some(membership) => membership,
+        None => return,
+    };
     let mut memberships = load_memberships();
     memberships.insert(
         membership.id,

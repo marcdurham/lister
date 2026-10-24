@@ -397,6 +397,17 @@ fn app() -> Html {
             editing.set(Some(ids));
         })
     };
+    // A new item held back for the editor (long press on Add) is only kept if the editor's
+    // Save added it; leaving the editor any other way (Cancel, the back button) drops it.
+    {
+        let state = state.clone();
+        use_effect_with(editing.map(|(item_id, _)| item_id), move |item_id| {
+            if store::has_draft() && !item_id.is_some_and(store::is_draft) {
+                state.dispatch(Action::DiscardDraft);
+            }
+        });
+    }
+
     // Pops the history entry `on_edit` pushed; the popstate listener above is what
     // actually clears `editing` once that happens.
     let close_editor = Callback::from(move |_: ()| {
@@ -642,7 +653,12 @@ fn app() -> Html {
                 }
                 if !in_orphans {
                     <div class="composer-bar">
-                        <Composer state={state.clone()} parent={current_parent} search={search.clone()} />
+                        <Composer
+                            state={state.clone()}
+                            parent={current_parent}
+                            search={search.clone()}
+                            on_edit={on_edit.clone()}
+                        />
                     </div>
                 }
                 <div class="list-toolbar">

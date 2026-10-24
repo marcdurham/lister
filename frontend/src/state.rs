@@ -49,14 +49,18 @@ pub const ORPHANS_ID: Uuid = Uuid::nil();
 impl AppState {
     pub fn load() -> Self {
         store::backfill_list_flags();
-        let items = store::load_items()
+        let mut items: HashMap<Uuid, Item> = store::load_items()
             .into_values()
             .map(|r| (r.item.id, r.item))
             .collect();
-        let memberships = store::load_memberships()
+        let mut memberships: HashMap<Uuid, Membership> = store::load_memberships()
             .into_values()
             .map(|r| (r.membership.id, r.membership))
             .collect();
+        if let Some((item, draft_memberships)) = store::draft_rows() {
+            items.insert(item.id, item);
+            memberships.extend(draft_memberships.into_iter().map(|m| (m.id, m)));
+        }
         Self {
             items,
             memberships,
@@ -410,14 +414,21 @@ pub enum Action {
     /// show/hide window has just opened or closed appear/disappear on their own instead
     /// of waiting for the next real edit or a page refresh - see `main::visibility_tick_loop`.
     Tick,
-    /// `url` set makes the new item a link (its `text` may then be blank).
+    /// `url` set makes the new item a link (its `text` may then be blank). `draft` set to
+    /// (item id, membership id) holds the item back as an unsaved draft for the editor
+    /// instead of adding it - see `store::begin_draft`.
     AddItem {
         text: String,
         is_note: bool,
         is_list: bool,
         url: Option<String>,
         parent: Option<Uuid>,
+        draft: Option<(Uuid, Uuid)>,
     },
+    /// Adds the editor's draft item for real.
+    CommitDraft,
+    /// Throws away the editor's draft item.
+    DiscardDraft,
     ToggleDone(Uuid),
     UpdateNotes {
         item_id: Uuid,
@@ -528,6 +539,7 @@ impl AppState {
                 is_list,
                 url,
                 parent,
+                draft,
             } => {
                 let mut item = Item::new(text, is_note);
                 item.is_list = is_list;
@@ -539,13 +551,36 @@ impl AppState {
                     .first()
                     .map(|(_, m)| m.position - 1.0)
                     .unwrap_or(1.0);
-                let membership = Membership::new(item.id, parent, next_pos);
-                store::put_item(item.clone());
-                store::put_membership(membership.clone());
+                let mut membership = Membership::new(item.id, parent, next_pos);
+                if let Some((item_id, membership_id)) = draft {
+                    item.id = item_id;
+                    membership.item_id = item_id;
+                    membership.id = membership_id;
+                    store::begin_draft(item.clone(), membership.clone());
+                } else {
+                    store::put_item(item.clone());
+                    store::put_membership(membership.clone());
+                }
 
                 let mut next = (*self).clone();
                 next.items.insert(item.id, item);
                 next.memberships.insert(membership.id, membership);
+                Rc::new(next)
+            }
+            Action::CommitDraft => {
+                store::commit_draft();
+                Rc::new((*self).clone())
+            }
+            Action::DiscardDraft => {
+                let Some((item, memberships)) = store::draft_rows() else {
+                    return self;
+                };
+                store::discard_draft();
+                let mut next = (*self).clone();
+                next.items.remove(&item.id);
+                for m in memberships {
+                    next.memberships.remove(&m.id);
+                }
                 Rc::new(next)
             }
             Action::ToggleDone(item_id) => {

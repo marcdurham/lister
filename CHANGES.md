@@ -336,3 +336,14 @@
 - Migration `0009_backfill_is_list.sql` (and a one-time pass over each browser's local
   cache, plus JSON imports) flags existing tasks with children as lists, so nothing that
   showed as a list before changes. Google Tasks imports now create their lists as lists.
+
+## 2026-10-24 14:35 PDT
+- Long-pressing (holding for half a second) the composer's **Add** button opens the new
+  item in the item editor before it's added, so its title, notes, type, dates, etc. can be
+  filled in first. The editor's Save button reads **Add** for such an item; Cancel or the
+  back button discards it, and it's never written to local storage or synced until added.
+  Works with an empty input too (type the title in the editor). A normal tap/click on Add
+  still adds the item right away.
+- Added `store::begin_draft`/`commit_draft`/`discard_draft` (an in-memory draft that
+  `put_item`/`put_membership` update instead of storage), `Action::CommitDraft`,
+  `Action::DiscardDraft`, and a `draft` field on `Action::AddItem`.
