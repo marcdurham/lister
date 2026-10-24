@@ -326,3 +326,13 @@
   before the row it replaces was trashed.
 - Added `backup::new_rows`, `store::add_all`, and `Action::MergeJson`; added a
   `.editor-actions button.danger` style.
+
+## 2026-10-24 14:25 PDT
+- Any item type can now be converted into a list and back again: the item editor offers
+  "Convert to ..." for every type other than the current one (lists were missing
+  "Convert to note"), and an item's own type flags now decide how it behaves. Before, a
+  task with children always acted as a list, so converting a list to a task did nothing
+  visible. Converting a list away keeps its children; converting it back shows them again.
+- Migration `0009_backfill_is_list.sql` (and a one-time pass over each browser's local
+  cache, plus JSON imports) flags existing tasks with children as lists, so nothing that
+  showed as a list before changes. Google Tasks imports now create their lists as lists.

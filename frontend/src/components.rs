@@ -1109,7 +1109,7 @@ pub fn item_row(props: &ItemRowProps) -> Html {
     let membership = &props.membership;
     let state = props.state.clone();
     let child_count = state.direct_child_count(item.id);
-    let is_list = !item.is_note && !item.is_link && (item.is_list || child_count > 0);
+    let is_list = item.is_list && !item.is_note && !item.is_link;
     let is_dragging_this = props.dragging == Some(membership.id);
     let drag_active = props.dragging.is_some();
     let has_dates = item.due_at.is_some() || item.show_after.is_some() || item.hide_after.is_some();
@@ -1951,7 +1951,6 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         })
     };
 
-    let is_task = !item.is_note && !item.is_list && !item.is_link;
     let kind_label = if item.is_note {
         "note"
     } else if item.is_link {
@@ -2063,16 +2062,16 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                 <div class="editor-type">
                     <span>{ format!("Currently a {kind_label}") }</span>
                     <div class="editor-type-actions">
-                        if !item.is_note && (item.is_link || !item.is_list) {
+                        if kind_label != "note" {
                             <button onclick={convert_to(true, false, false)}>{ "Convert to note" }</button>
                         }
-                        if !item.is_list || item.is_link {
+                        if kind_label != "list" {
                             <button onclick={convert_to(false, true, false)}>{ "Convert to list" }</button>
                         }
-                        if !is_task {
+                        if kind_label != "task" {
                             <button onclick={convert_to(false, false, false)}>{ "Convert to task" }</button>
                         }
-                        if !item.is_link {
+                        if kind_label != "link" {
                             <button onclick={convert_to(false, false, true)}>{ "Convert to link" }</button>
                         }
                     </div>
@@ -2148,7 +2147,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             { time_unit_select(&recur_unit, on_recur_unit_change) }
                         }
                     </div>
-                    if item.is_list || state.direct_child_count(item.id) > 0 {
+                    if item.is_list {
                         <label class="editor-schedule-recur-toggle">
                             <input
                                 type="checkbox"
@@ -2236,7 +2235,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                     }
                 </div>
                 <div class="editor-actions">
-                    if is_task {
+                    if kind_label == "task" {
                         <button class="done-btn" onclick={toggle_done}>
                             { if item.done { "Not done" } else { "Done" } }
                         </button>
@@ -2421,7 +2420,7 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                 <button onclick={cancel.clone()}>{ "Back" }</button>
             </div>
             <div class="list-manager-current">
-                if item.is_note { { note_icon() } } else if item.is_link { { link_icon() } } else if item.is_list || state.direct_child_count(item_id) > 0 {
+                if item.is_note { { note_icon() } } else if item.is_link { { link_icon() } } else if item.is_list {
                     { list_icon() }
                 } else {
                     <input type="checkbox" checked={item.done} disabled=true />
@@ -2519,7 +2518,9 @@ pub fn list_manager(props: &ListManagerProps) -> Html {
                                 <input type="checkbox" checked={checked} onclick={toggle} />
                                 if row_item.is_note {
                                     { note_icon() }
-                                } else if row_item.is_list || has_children {
+                                } else if row_item.is_link {
+                                    { link_icon() }
+                                } else if row_item.is_list {
                                     { list_icon() }
                                 }
                                 <span class="item-text">{ row_item.display_text() }</span>

@@ -12,6 +12,7 @@ const HAS_LOGGED_IN_KEY: &str = "lister.has_logged_in";
 const THEME_KEY: &str = "lister.theme";
 const REMOTE_MODE_KEY: &str = "lister.remote_mode";
 const LAST_SYNC_KEY: &str = "lister.last_sync";
+const LISTS_BACKFILLED_KEY: &str = "lister.lists_backfilled";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ItemRecord {
@@ -115,6 +116,36 @@ extern "C" {
     /// `data-theme` attribute the stylesheet keys off.
     #[wasm_bindgen(js_namespace = window, js_name = listerApplyTheme)]
     fn apply_theme();
+}
+
+/// One-time upgrade of the local cache to explicit list flags: sets `is_list` (marking the
+/// row dirty, so it syncs) on every task that has children, since those acted as lists
+/// before an item's own flags alone decided its type. Later imports and pulls don't need
+/// this - imports run `promote_parents_to_lists` themselves, and the server ran the same
+/// backfill in a migration.
+pub fn backfill_list_flags() {
+    if LocalStorage::get::<bool>(LISTS_BACKFILLED_KEY).unwrap_or(false) {
+        return;
+    }
+    let mut records = load_items();
+    let mut items: Vec<Item> = records.values().map(|r| r.item.clone()).collect();
+    let memberships: Vec<Membership> = load_memberships()
+        .into_values()
+        .map(|r| r.membership)
+        .collect();
+    let changed = crate::state::promote_parents_to_lists(&mut items, &memberships);
+    if !changed.is_empty() {
+        let now = Utc::now();
+        for item in items.into_iter().filter(|i| changed.contains(&i.id)) {
+            if let Some(record) = records.get_mut(&item.id) {
+                record.item = item;
+                record.item.updated_at = now;
+                record.dirty = true;
+            }
+        }
+        save_items(&records);
+    }
+    let _ = LocalStorage::set(LISTS_BACKFILLED_KEY, true);
 }
 
 /// Insert/update a single item locally, marking it dirty so the next sync push picks it up.

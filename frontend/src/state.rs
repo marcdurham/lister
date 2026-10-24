@@ -17,11 +17,38 @@ pub struct AppState {
     pub sync_info: HashMap<Uuid, store::ItemSync>,
 }
 
+/// Sets `is_list` on every task among `items` that has a live child in `memberships`,
+/// returning the ids it changed. An item's own flags decide what it is (a list converted
+/// back to a task keeps its children but stops acting as a list), so data from before
+/// lists were an explicit type - where any parent acted as a list - is upgraded with this
+/// on import and once on load (see `store::backfill_list_flags`).
+pub fn promote_parents_to_lists(items: &mut [Item], memberships: &[Membership]) -> Vec<Uuid> {
+    let live: std::collections::HashSet<Uuid> = items
+        .iter()
+        .filter(|i| i.deleted_at.is_none())
+        .map(|i| i.id)
+        .collect();
+    let parents: std::collections::HashSet<Uuid> = memberships
+        .iter()
+        .filter(|m| m.deleted_at.is_none() && live.contains(&m.item_id))
+        .filter_map(|m| m.parent_id)
+        .collect();
+    let mut changed = Vec::new();
+    for item in items.iter_mut() {
+        if parents.contains(&item.id) && !item.is_list && !item.is_note && !item.is_link {
+            item.is_list = true;
+            changed.push(item.id);
+        }
+    }
+    changed
+}
+
 /// Sentinel list id in a view path standing for the virtual "Orphans" list.
 pub const ORPHANS_ID: Uuid = Uuid::nil();
 
 impl AppState {
     pub fn load() -> Self {
+        store::backfill_list_flags();
         let items = store::load_items()
             .into_values()
             .map(|r| (r.item.id, r.item))
@@ -330,12 +357,7 @@ impl AppState {
         for (item, _) in self.children(parent, true) {
             out.push_str(&"  ".repeat(depth));
             out.push_str("- ");
-            // Mirrors the row's own list detection: an item with children renders (and
-            // exports) as a list even if `is_list` was never explicitly set on it.
-            let is_task = !item.is_note
-                && !item.is_list
-                && !item.is_link
-                && self.direct_child_count(item.id) == 0;
+            let is_task = !item.is_note && !item.is_list && !item.is_link;
             if is_task {
                 out.push_str(if item.done { "DONE: " } else { "TODO: " });
             }
@@ -847,7 +869,8 @@ impl AppState {
             Action::ImportGoogleTasks(lists) => {
                 let mut next = (*self).clone();
                 for list in lists {
-                    let list_item = Item::new(list.title, false);
+                    let mut list_item = Item::new(list.title, false);
+                    list_item.is_list = true;
                     let list_pos = next
                         .children(None, true)
                         .last()
@@ -913,7 +936,11 @@ impl AppState {
                 }
                 Rc::new(next)
             }
-            Action::ImportJson { items, memberships } => {
+            Action::ImportJson {
+                mut items,
+                memberships,
+            } => {
+                promote_parents_to_lists(&mut items, &memberships);
                 store::replace_all(items, memberships);
                 Rc::new(AppState {
                     online: self.online,
@@ -921,7 +948,11 @@ impl AppState {
                     ..AppState::load()
                 })
             }
-            Action::MergeJson { items, memberships } => {
+            Action::MergeJson {
+                mut items,
+                memberships,
+            } => {
+                promote_parents_to_lists(&mut items, &memberships);
                 store::add_all(items.clone(), memberships.clone());
                 let mut next = (*self).clone();
                 next.items.extend(items.into_iter().map(|i| (i.id, i)));
@@ -1038,11 +1069,10 @@ mod tests {
         );
     }
 
-    /// A parent with children is exported as a list (no TODO:/DONE: prefix) even if
-    /// `is_list` was never explicitly set on it - matching how a row with children
-    /// always renders as a list regardless of that flag.
+    /// An item's own flags decide what it exports as: a list converted back to a task
+    /// keeps its children but exports as a task again.
     #[test]
-    fn copy_as_markdown_treats_items_with_children_as_lists() {
+    fn copy_as_markdown_follows_the_items_own_kind() {
         let parent = item("Errands", false, false, false);
         let parent_id = parent.id;
         let child = item("Buy milk", false, false, false);
@@ -1058,7 +1088,7 @@ mod tests {
         );
         items.insert(parent.id, parent);
         items.insert(child.id, child);
-        let state = AppState {
+        let mut state = AppState {
             items,
             memberships,
             online: true,
@@ -1067,8 +1097,34 @@ mod tests {
         };
         assert_eq!(
             state.copy_as_markdown(None),
+            "- TODO: Errands\n  - TODO: Buy milk\n"
+        );
+        state.items.get_mut(&parent_id).unwrap().is_list = true;
+        assert_eq!(
+            state.copy_as_markdown(None),
             "- Errands\n  - TODO: Buy milk\n"
         );
+    }
+
+    /// Legacy data (any parent acted as a list) is upgraded by flagging task parents as
+    /// lists; notes, links, existing lists and childless tasks are left alone.
+    #[test]
+    fn promote_parents_to_lists_flags_only_task_parents() {
+        let task_parent = item("Errands", false, false, false);
+        let note_parent = item("Ideas", true, false, false);
+        let mut link_parent = item("Docs", false, false, false);
+        link_parent.is_link = true;
+        let leaf = item("Buy milk", false, false, false);
+        let memberships = vec![
+            Membership::new(leaf.id, Some(task_parent.id), 1.0),
+            Membership::new(leaf.id, Some(note_parent.id), 1.0),
+            Membership::new(leaf.id, Some(link_parent.id), 1.0),
+        ];
+        let mut items = vec![task_parent.clone(), note_parent, link_parent, leaf];
+        let changed = promote_parents_to_lists(&mut items, &memberships);
+        assert_eq!(changed, vec![task_parent.id]);
+        assert!(items[0].is_list);
+        assert!(!items[1].is_list && !items[2].is_list && !items[3].is_list);
     }
 
     /// The markdown import parser must accept the exact format `copy_as_markdown`
