@@ -347,3 +347,8 @@
 - Added `store::begin_draft`/`commit_draft`/`discard_draft` (an in-memory draft that
   `put_item`/`put_membership` update instead of storage), `Action::CommitDraft`,
   `Action::DiscardDraft`, and a `draft` field on `Action::AddItem`.
+
+## 2026-10-24 15:10 PDT
+- The "Show hidden items" checkbox now shows how many items in the current view are
+  hidden, e.g. "Show hidden items (3)". The count respects the current list, nested
+  mode and search filter, and stays the same whether the box is checked or not.

@@ -485,24 +485,34 @@ fn app() -> Html {
     // every list instead of just the top-level ones.
     let searching_globally = current_parent.is_none() && query_lower.is_some();
     let in_orphans = current_parent == Some(state::ORPHANS_ID);
-    let mut rows: Vec<(shared::Item, shared::Membership, usize)> = if in_orphans {
-        state.orphan_rows()
-    } else if searching_globally {
-        state.search_all(query_lower.as_deref().unwrap(), *show_hidden)
-    } else if nested_mode {
-        state.children_recursive(current_parent, *show_hidden)
-    } else {
-        state
-            .children(current_parent, *show_hidden)
-            .into_iter()
-            .map(|(item, membership)| (item, membership, 0))
-            .collect()
-    };
-    if !searching_globally {
-        if let Some(query) = &query_lower {
-            rows.retain(|(item, _, _)| item.display_text().to_lowercase().contains(query));
+    let view_rows = |include_hidden: bool| -> Vec<(shared::Item, shared::Membership, usize)> {
+        let mut rows = if in_orphans {
+            state.orphan_rows()
+        } else if searching_globally {
+            state.search_all(query_lower.as_deref().unwrap(), include_hidden)
+        } else if nested_mode {
+            state.children_recursive(current_parent, include_hidden)
+        } else {
+            state
+                .children(current_parent, include_hidden)
+                .into_iter()
+                .map(|(item, membership)| (item, membership, 0))
+                .collect()
+        };
+        if !searching_globally {
+            if let Some(query) = &query_lower {
+                rows.retain(|(item, _, _)| item.display_text().to_lowercase().contains(query));
+            }
         }
-    }
+        rows
+    };
+    let rows = view_rows(*show_hidden);
+    // How many rows in the current view the "Show hidden items" toggle hides.
+    let hidden_count = if *show_hidden {
+        rows.len() - view_rows(false).len()
+    } else {
+        view_rows(true).len() - rows.len()
+    };
 
     // While a drag is in progress, redraw the list with the dragged row already sitting
     // at the position it would land in on drop, instead of separately highlighting
@@ -665,6 +675,7 @@ fn app() -> Html {
                     <label class="show-hidden">
                         <input type="checkbox" checked={*show_hidden} onclick={toggle_hidden} />
                         { " Show hidden items" }
+                        <span class="hidden-count">{ format!(" ({hidden_count})") }</span>
                     </label>
                     <button class="copy-list-btn" onclick={copy_list}>{ "Copy list" }</button>
                 </div>
