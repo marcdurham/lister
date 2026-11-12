@@ -336,3 +336,12 @@
 - Migration `0009_backfill_is_list.sql` (and a one-time pass over each browser's local
   cache, plus JSON imports) flags existing tasks with children as lists, so nothing that
   showed as a list before changes. Google Tasks imports now create their lists as lists.
+
+## 2026-11-11 23:31 PST
+- Added `deploy.sh`, which deploys straight from this machine without GitHub Actions. It
+  rsyncs the source to the Docker host (respecting `.gitignore`), writes the app settings
+  to `~/lister/.env` there, runs `docker compose up --build -d`, then waits for
+  `/api/health` and prints container logs if the app doesn't come up. Settings live in a
+  gitignored `deploy.env` (template: `deploy.env.example`).
+- The GitHub deploy workflow's rsync now excludes `.env`, so it no longer deletes the
+  host's `.env` on every deploy.
