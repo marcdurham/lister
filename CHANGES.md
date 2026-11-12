@@ -345,3 +345,8 @@
   gitignored `deploy.env` (template: `deploy.env.example`).
 - The GitHub deploy workflow's rsync now excludes `.env`, so it no longer deletes the
   host's `.env` on every deploy.
+
+## 2026-11-11 23:40 PST
+- `deploy.sh` now reads `deploy.env` as literal `KEY=value` lines instead of sourcing it
+  as shell code, so values with spaces or special characters (e.g. a password with a
+  space) work without quoting and are never executed.

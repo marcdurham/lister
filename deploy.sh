@@ -16,10 +16,24 @@ if [[ ! -f deploy.env ]]; then
   echo "deploy.env not found. Copy deploy.env.example to deploy.env and fill it in." >&2
   exit 1
 fi
-set -a
-# shellcheck disable=SC1091
-source deploy.env
-set +a
+# Read deploy.env as literal KEY=value lines (not shell code), so values may contain
+# spaces, $ and other special characters without quoting. One pair of matching
+# surrounding quotes is stripped if present.
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line="${line%$'\r'}"
+  [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+  if [[ ! "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+    echo "deploy.env: can't parse line: $line" >&2
+    exit 1
+  fi
+  key="${BASH_REMATCH[1]}"
+  value="${BASH_REMATCH[2]}"
+  if [[ "$value" =~ ^\"(.*)\"$ || "$value" =~ ^\'(.*)\'$ ]]; then
+    value="${BASH_REMATCH[1]}"
+  fi
+  printf -v "$key" '%s' "$value"
+  export "${key?}"
+done < deploy.env
 
 missing=()
 for var in SSH_USER DEPLOYMENT_HOST POSTGRES_PASSWORD; do
