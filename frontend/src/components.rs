@@ -633,7 +633,13 @@ pub struct ComposerProps {
     pub parent: Option<Uuid>,
     /// Live search query for the current list; `None` while the composer is in add mode.
     pub search: UseStateHandle<Option<String>>,
+    /// Opens the item editor on (item id, membership id) - used by a long press on Add to
+    /// fill in a new item before adding it.
+    pub on_edit: Callback<(Uuid, Uuid)>,
 }
+
+/// How long the Add button must be held to open the new item in the editor instead.
+const LONG_PRESS_MS: u32 = 500;
 
 #[function_component(Composer)]
 pub fn composer(props: &ComposerProps) -> Html {
@@ -659,14 +665,17 @@ pub fn composer(props: &ComposerProps) -> Html {
         })
     };
 
+    // `in_editor` holds the item back as a draft and opens it in the editor, where it's
+    // only added on Save; it's allowed with an empty input, since the editor has a title field.
     let submit = {
         let draft = draft.clone();
         let kind = kind.clone();
         let state = props.state.clone();
         let parent = props.parent;
-        move || {
+        let on_edit = props.on_edit.clone();
+        move |in_editor: bool| {
             let text = draft.trim().to_string();
-            if text.is_empty() {
+            if text.is_empty() && !in_editor {
                 return;
             }
             // A link's composer input is its URL; the title starts blank (so the URL is shown).
@@ -675,26 +684,65 @@ pub fn composer(props: &ComposerProps) -> Html {
             } else {
                 (text, None)
             };
+            let ids = (Uuid::new_v4(), Uuid::new_v4());
             state.dispatch(Action::AddItem {
                 text,
                 is_note: *kind == ItemKind::Note,
                 is_list: *kind == ItemKind::List,
                 url,
                 parent,
+                draft: in_editor.then_some(ids),
             });
             draft.set(String::new());
+            if in_editor {
+                on_edit.emit(ids);
+            }
         }
     };
 
+    // Holding Add opens the new item in the editor; the click that follows the release is
+    // then swallowed so it doesn't also add the item.
+    let press_timer = use_mut_ref(|| None::<Timeout>);
+    let long_pressed = use_mut_ref(|| false);
+    let on_add_pointer_down = {
+        let submit = submit.clone();
+        let press_timer = press_timer.clone();
+        let long_pressed = long_pressed.clone();
+        Callback::from(move |e: PointerEvent| {
+            if e.button() != 0 {
+                return;
+            }
+            *long_pressed.borrow_mut() = false;
+            let submit = submit.clone();
+            let long_pressed = long_pressed.clone();
+            *press_timer.borrow_mut() = Some(Timeout::new(LONG_PRESS_MS, move || {
+                *long_pressed.borrow_mut() = true;
+                submit(true);
+            }));
+        })
+    };
+    let cancel_press = {
+        let press_timer = press_timer.clone();
+        Callback::from(move |_: PointerEvent| {
+            press_timer.borrow_mut().take();
+        })
+    };
     let onclick = {
         let submit = submit.clone();
-        Callback::from(move |_: MouseEvent| submit())
+        let long_pressed = long_pressed.clone();
+        Callback::from(move |_: MouseEvent| {
+            if !std::mem::take(&mut *long_pressed.borrow_mut()) {
+                submit(false);
+            }
+        })
     };
+    // Keeps a touch long press from opening the browser's context menu.
+    let on_add_context_menu = Callback::from(|e: MouseEvent| e.prevent_default());
     let onkeypress = {
         let submit = submit.clone();
         Callback::from(move |e: KeyboardEvent| {
             if e.key() == "Enter" {
-                submit();
+                submit(false);
             }
         })
     };
@@ -754,7 +802,18 @@ pub fn composer(props: &ComposerProps) -> Html {
                     <option value="list" selected={*kind == ItemKind::List}>{ "List" }</option>
                     <option value="link" selected={*kind == ItemKind::Link}>{ "Link" }</option>
                 </select>
-                <button {onclick}>{ "Add" }</button>
+                <button
+                    class="composer-add"
+                    title="Add (hold to edit before adding)"
+                    {onclick}
+                    onpointerdown={on_add_pointer_down}
+                    onpointerup={cancel_press.clone()}
+                    onpointerleave={cancel_press.clone()}
+                    onpointercancel={cancel_press}
+                    oncontextmenu={on_add_context_menu}
+                >
+                    { "Add" }
+                </button>
             </div>
         }
     }
@@ -1864,6 +1923,15 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
         let on_close = props.on_close.clone();
         Callback::from(move |_: MouseEvent| {
             let trimmed = text.trim().to_string();
+            // A new item held back as a draft is only added now; with nothing typed into it,
+            // closing (which discards the draft) is all there is to do.
+            if store::is_draft(id) {
+                if trimmed.is_empty() && !(is_link && !url.trim().is_empty()) {
+                    on_close.emit(());
+                    return;
+                }
+                state.dispatch(Action::CommitDraft);
+            }
             // A link's text may be blank - its row then shows the URL instead.
             if !trimmed.is_empty() || is_link {
                 state.dispatch(Action::UpdateText {
@@ -2012,6 +2080,8 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
     };
 
     let removable_children = state.only_child_descendant_ids(item.id).len();
+    // Not added yet: there's nothing to remove or push, and Cancel already discards it.
+    let is_draft = store::is_draft(item.id);
 
     html! {
         <div class="editor-overlay item-editor-page">
@@ -2167,7 +2237,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                         </button>
                     }
                     <button onclick={manage_lists}>{ "Lists" }</button>
-                    if props.remote_mode {
+                    if props.remote_mode && !is_draft {
                         <div class="remote-menu" ref={remote_ref}>
                             <button type="button" onclick={toggle_remote_menu} disabled={*remote_busy}>
                                 { if *remote_busy { "Working..." } else { "Remote" } }
@@ -2184,7 +2254,9 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             }
                         </div>
                     }
-                    <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
+                    if !is_draft {
+                        <button class="remove" onclick={open_confirm_remove}>{ "Remove" }</button>
+                    }
                 </div>
                 if *confirm_remove {
                     <div class="confirm-remove">
@@ -2240,7 +2312,7 @@ pub fn item_editor(props: &ItemEditorProps) -> Html {
                             { if item.done { "Not done" } else { "Done" } }
                         </button>
                     }
-                    <button onclick={save}>{ "Save" }</button>
+                    <button onclick={save}>{ if is_draft { "Add" } else { "Save" } }</button>
                     <button onclick={close}>{ "Cancel" }</button>
                 </div>
             </div>

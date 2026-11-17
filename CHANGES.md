@@ -337,6 +337,22 @@
   cache, plus JSON imports) flags existing tasks with children as lists, so nothing that
   showed as a list before changes. Google Tasks imports now create their lists as lists.
 
+## 2026-10-24 14:35 PDT
+- Long-pressing (holding for half a second) the composer's **Add** button opens the new
+  item in the item editor before it's added, so its title, notes, type, dates, etc. can be
+  filled in first. The editor's Save button reads **Add** for such an item; Cancel or the
+  back button discards it, and it's never written to local storage or synced until added.
+  Works with an empty input too (type the title in the editor). A normal tap/click on Add
+  still adds the item right away.
+- Added `store::begin_draft`/`commit_draft`/`discard_draft` (an in-memory draft that
+  `put_item`/`put_membership` update instead of storage), `Action::CommitDraft`,
+  `Action::DiscardDraft`, and a `draft` field on `Action::AddItem`.
+
+## 2026-10-24 15:10 PDT
+- The "Show hidden items" checkbox now shows how many items in the current view are
+  hidden, e.g. "Show hidden items (3)". The count respects the current list, nested
+  mode and search filter, and stays the same whether the box is checked or not.
+
 ## 2026-11-11 23:31 PST
 - Added `deploy.sh`, which deploys straight from this machine without GitHub Actions. It
   rsyncs the source to the Docker host (respecting `.gitignore`), writes the app settings

@@ -157,8 +157,106 @@ struct Node {
     time_visible: bool,
 }
 
+/// parent (None = top level) -> (position, visible, child), in list order.
+type Children = HashMap<Option<Uuid>, Vec<(f64, bool, Uuid)>>;
+
+/// The list at `segments` (lowercased names). Tried first from the top level down; when that
+/// fails, the first segment may be a list anywhere in the tree (so a list that was moved into
+/// another one is still found by its name): the shallowest match whose remaining segments
+/// resolve beneath it wins. `node` gives an existing item's lowercased name and whether it is a
+/// list; ids it doesn't know (deleted items) are skipped.
+fn resolve_path<'a>(segments: &[String], children: &Children, node: impl Fn(&Uuid) -> Option<(&'a str, bool)>) -> Option<Uuid> {
+    let named = |parent: Option<Uuid>, seg: &str| {
+        children.get(&parent)?.iter().map(|c| c.2).find(|id| node(id).is_some_and(|(name, _)| name == seg))
+    };
+    let walk_from = |start: Option<Uuid>, segs: &[String]| segs.iter().try_fold(start, |cur, seg| named(cur, seg).map(Some));
+    let (first, rest) = segments.split_first()?;
+    if let Some(found) = walk_from(None, segments) {
+        return found;
+    }
+    // Breadth-first from the top level, so shallower lists win; an item can sit in several lists.
+    let mut seen = std::collections::HashSet::new();
+    let mut queue: std::collections::VecDeque<Uuid> = children.get(&None).into_iter().flatten().map(|c| c.2).collect();
+    while let Some(id) = queue.pop_front() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some((name, is_list)) = node(&id) else { continue };
+        let kids = children.get(&Some(id));
+        if name == first && (is_list || kids.is_some_and(|k| !k.is_empty())) {
+            if let Some(found) = walk_from(Some(id), rest) {
+                return found;
+            }
+        }
+        queue.extend(kids.into_iter().flatten().map(|c| c.2));
+    }
+    None
+}
+
+#[cfg(test)]
+mod resolve_path_tests {
+    use super::*;
+
+    struct Tree {
+        children: Children,
+        names: HashMap<Uuid, (String, bool)>,
+    }
+
+    impl Tree {
+        fn new() -> Self {
+            Tree { children: HashMap::new(), names: HashMap::new() }
+        }
+        fn add(&mut self, parent: Option<Uuid>, name: &str, is_list: bool) -> Uuid {
+            let id = Uuid::new_v4();
+            let siblings = self.children.entry(parent).or_default();
+            siblings.push((siblings.len() as f64, true, id));
+            self.names.insert(id, (name.to_lowercase(), is_list));
+            id
+        }
+        fn resolve(&self, path: &str) -> Option<Uuid> {
+            let segs: Vec<String> = path.split('/').map(|s| s.to_lowercase()).collect();
+            resolve_path(&segs, &self.children, |id| self.names.get(id).map(|(n, l)| (n.as_str(), *l)))
+        }
+    }
+
+    #[test]
+    fn top_level_path_still_resolves() {
+        let mut t = Tree::new();
+        let home = t.add(None, "Home", true);
+        let groceries = t.add(Some(home), "Groceries", true);
+        assert_eq!(t.resolve("Home"), Some(home));
+        assert_eq!(t.resolve("home/groceries"), Some(groceries));
+    }
+
+    #[test]
+    fn finds_a_moved_list_by_name_anywhere() {
+        let mut t = Tree::new();
+        let projects = t.add(None, "Projects", true);
+        let dev = t.add(Some(projects), "Dev", true);
+        let features = t.add(Some(dev), "home-monitor features", true);
+        let sub = t.add(Some(features), "Later", true);
+        assert_eq!(t.resolve("home-monitor features"), Some(features));
+        assert_eq!(t.resolve("Dev/home-monitor features/Later"), Some(sub));
+        assert_eq!(t.resolve("Nope"), None);
+        assert_eq!(t.resolve("Dev/Nope"), None);
+    }
+
+    #[test]
+    fn prefers_top_level_then_shallowest_and_skips_plain_items() {
+        let mut t = Tree::new();
+        let a = t.add(None, "A", true);
+        let b = t.add(Some(a), "B", true);
+        let deep = t.add(Some(b), "House", true);
+        let _plain = t.add(Some(a), "House", false); // a plain item, not a list: ignored
+        assert_eq!(t.resolve("House"), Some(deep));
+        let top = t.add(None, "House", true);
+        assert_eq!(t.resolve("House"), Some(top));
+    }
+}
+
 /// `GET /api/lists?path=Home/Groceries`: the items of the list at `path` (list names from a
-/// top-level list down, matched case-insensitively), in the list's order, minus deleted and
+/// top-level list down, matched case-insensitively; if that fails, the path may start at a list
+/// anywhere, see `resolve_path`), in the list's order, minus deleted and
 /// hidden ones. Done items are included (flagged) so the caller can decide what to show.
 #[get("/api/lists")]
 pub async fn get_list(pool: web::Data<PgPool>, req: HttpRequest, q: web::Query<ListQuery>) -> impl Responder {
@@ -234,17 +332,9 @@ pub async fn get_list(pool: web::Data<PgPool>, req: HttpRequest, q: web::Query<L
         v.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
 
-    let mut current: Option<Uuid> = None;
-    for seg in &segments {
-        let found = children
-            .get(&current)
-            .and_then(|c| c.iter().find(|(_, _, id)| nodes.get(id).is_some_and(|n| n.text_lower == *seg)));
-        match found {
-            Some((_, _, id)) => current = Some(*id),
-            None => return HttpResponse::NotFound().body(format!("no list at path `{}`", q.path)),
-        }
-    }
-    let list_id = current.expect("segments is non-empty");
+    let Some(list_id) = resolve_path(&segments, &children, |id| nodes.get(id).map(|n| (n.text_lower.as_str(), n.item.is_list))) else {
+        return HttpResponse::NotFound().body(format!("no list at path `{}`", q.path));
+    };
 
     fn walk(
         parent: Uuid,
